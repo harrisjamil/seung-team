@@ -132,3 +132,67 @@ create trigger trg_api_integrations_updated_at
 before update on public.api_integrations
 for each row
 execute function public.set_updated_at();
+
+-- Chat bot message history (per user_id or guest id from app localStorage)
+create table if not exists public.chat_bot_history (
+  id bigserial primary key,
+  user_id text not null,
+  role text not null check (role in ('user', 'assistant')),
+  content text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists chat_bot_history_user_created_idx
+  on public.chat_bot_history (user_id, created_at desc);
+
+comment on table public.chat_bot_history is 'AI chat messages for search/history; user_id is app users.user_id or guest_* id';
+
+-- Command-to-user direct messaging (Realtime-enabled in Supabase Dashboard if needed)
+create table if not exists public.direct_messages (
+  id bigserial primary key,
+  from_user_id text not null,
+  to_user_id text not null,
+  body text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists direct_messages_pair_created_idx
+  on public.direct_messages (created_at asc);
+
+create index if not exists direct_messages_from_idx
+  on public.direct_messages (from_user_id, created_at desc);
+
+create index if not exists direct_messages_to_idx
+  on public.direct_messages (to_user_id, created_at desc);
+
+-- Recipient read receipt (null = unread for the addressee)
+alter table public.direct_messages add column if not exists read_at timestamptz null;
+
+-- Optional after adding the column: backfill so legacy rows do not all count as unread
+-- update public.direct_messages set read_at = created_at where read_at is null;
+
+create index if not exists direct_messages_unread_idx
+  on public.direct_messages (to_user_id)
+  where read_at is null;
+
+alter table public.direct_messages enable row level security;
+
+-- Demo-friendly policies so browser Realtime + anon key work. Tighten for production (auth.uid(), etc.).
+drop policy if exists "dm_select_any" on public.direct_messages;
+create policy "dm_select_any"
+  on public.direct_messages for select
+  using (true);
+
+drop policy if exists "dm_insert_any" on public.direct_messages;
+create policy "dm_insert_any"
+  on public.direct_messages for insert
+  with check (true);
+
+drop policy if exists "dm_update_any" on public.direct_messages;
+create policy "dm_update_any"
+  on public.direct_messages for update
+  using (true)
+  with check (true);
+
+-- Enable Realtime for this table (Supabase hosted: run in SQL Editor if replication not enabled)
+-- alter publication supabase_realtime add table public.direct_messages;

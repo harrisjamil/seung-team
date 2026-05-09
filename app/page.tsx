@@ -3,10 +3,14 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import useSWR from "swr";
-import { Eye, EyeOff, Ship, Shield, Waves, Compass } from "lucide-react";
+import { Eye, EyeOff, Ship, Shield, Waves, Compass, Bot, Send, X } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { fadeInUp, floating, staggerContainer } from "./lib/animations";
+import { appendChatMessages, fetchChatHistory } from "./lib/chatHistoryClient";
+import { getChatUserId } from "./lib/chatUserId";
 import { clearSession, getSession, setSession, type AppRole } from "./lib/auth";
+import toast from "react-hot-toast";
+import { ThemeToggle } from "./components/ThemeToggle";
 
 const SUPABASE_URL =
   process.env.NEXT_PUBLIC_SUPABASE_URL ??
@@ -28,6 +32,17 @@ type PresetUserRow = {
   role: string;
   username: string;
   password: string;
+};
+
+type ChatMessage = {
+  role: "user" | "assistant";
+  text: string;
+  id?: number;
+};
+
+const CHAT_WELCOME: ChatMessage = {
+  role: "assistant",
+  text: "Hi, I am Seung AI. Ask me anything about your fleet operations.",
 };
 
 async function fetchLoginPresets() {
@@ -61,6 +76,10 @@ export default function Home() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([CHAT_WELCOME]);
   const { data: swrPresets, error: swrPresetError } = useSWR(
     "fleet-login-presets",
     fetchLoginPresets,
@@ -80,8 +99,11 @@ export default function Home() {
       setUsername(p.username);
       setPassword(p.password);
       setError("");
+      toast.success(`Filled ${targetRole} preset credentials.`);
     } else {
-      setError(`No ${targetRole} login found in users table`);
+      const msg = `No ${targetRole} login found in users table`;
+      setError(msg);
+      toast.error(msg);
     }
   };
 
@@ -103,6 +125,26 @@ export default function Home() {
 
   }, [router]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const uid = getChatUserId();
+        if (uid === "ssr") return;
+        const rows = await fetchChatHistory(uid, { limit: 100 });
+        if (cancelled || rows.length === 0) return;
+        setChatMessages(
+          rows.map((r) => ({ role: r.role, text: r.content, id: r.id })),
+        );
+      } catch {
+        // keep default welcome
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const submitLogin = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -120,13 +162,17 @@ export default function Home() {
         headers: { apikey: SUPABASE_KEY },
       });
       if (!res.ok) {
-        setError("Supabase login query failed");
+        const msg = "Supabase login query failed";
+        setError(msg);
+        toast.error(msg);
         return;
       }
       const rows = (await res.json()) as UserRow[];
       const user = rows[0];
       if (!user || user.password !== password) {
-        setError("Invalid credentials");
+        const msg = "Invalid credentials";
+        setError(msg);
+        toast.error(msg);
         return;
       }
       const session = {
@@ -143,17 +189,75 @@ export default function Home() {
         clearSession();
         window.localStorage.setItem("fleet-remember-me", "0");
       }
-      if (session.role === "command") router.push("/command");
-      else router.push(`/captain?ship=${session.shipId ?? "BRV-001"}`);
+      if (session.role === "command") {
+        toast.success("Signed in to command.");
+        router.push("/command");
+      } else {
+        toast.success(`Welcome aboard, ${session.displayName}.`);
+        router.push(`/captain?ship=${session.shipId ?? "BRV-001"}`);
+      }
     } catch {
-      setError("Network error while logging in");
+      const msg = "Network error while logging in";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
 
+  const sendChat = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const prompt = chatInput.trim();
+    if (!prompt || chatLoading) return;
+
+    const userId = getChatUserId();
+    setChatMessages((prev) => [...prev, { role: "user", text: prompt }]);
+    setChatInput("");
+    setChatLoading(true);
+    let assistantText = "";
+    try {
+      const response = await fetch("/api/huggingface/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt }),
+      });
+      const body = (await response.json()) as {
+        ok: boolean;
+        message?: string;
+        error?: string;
+      };
+      assistantText = body.ok
+        ? body.message?.trim() || "No response returned from model."
+        : body.error || "Unable to get AI response.";
+      if (!body.ok) {
+        toast.error(assistantText);
+      }
+      setChatMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
+    } catch {
+      assistantText = "Network error while contacting AI service.";
+      toast.error(assistantText);
+      setChatMessages((prev) => [...prev, { role: "assistant", text: assistantText }]);
+    } finally {
+      setChatLoading(false);
+    }
+
+    if (userId !== "ssr") {
+      try {
+        await appendChatMessages(userId, [
+          { role: "user", content: prompt },
+          { role: "assistant", content: assistantText },
+        ]);
+      } catch {
+        // optional persistence
+      }
+    }
+  };
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-white px-6 py-10 text-slate-900">
+    <main className="relative flex min-h-screen items-center justify-center overflow-x-hidden bg-white px-4 py-8 text-slate-900 sm:px-6 sm:py-10 dark:bg-slate-950 dark:text-slate-100">
+      <div className="fixed right-4 top-4 z-[60] sm:right-6 sm:top-6">
+        <ThemeToggle />
+      </div>
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <motion.div
           className="absolute -left-24 top-16 h-64 w-64 rounded-full bg-sky-300/20 blur-3xl"
@@ -202,7 +306,7 @@ export default function Home() {
         initial="hidden"
         animate="visible"
         variants={staggerContainer as any}
-        className="mx-auto grid w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-[0_24px_80px_-24px_rgba(15,23,42,0.35)] lg:grid-cols-[1.05fr_0.95fr]"
+        className="mx-auto grid w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_24px_80px_-24px_rgba(15,23,42,0.35)] dark:border-slate-700 dark:bg-slate-900 sm:rounded-3xl lg:grid-cols-[1.05fr_0.95fr] dark:shadow-[0_24px_80px_-24px_rgba(0,0,0,0.55)]"
       >
         <motion.section
           variants={fadeInUp as any}
@@ -274,11 +378,13 @@ export default function Home() {
         </motion.section>
 
         <motion.section variants={fadeInUp as any} className="p-8 lg:p-10">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
             Authentication
           </p>
-          <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">Sign in</h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <h2 className="mt-2 text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+            Sign in
+          </h2>
+          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Choose Command or Captain to auto-fill credentials from Supabase.
           </p>
 
@@ -288,8 +394,8 @@ export default function Home() {
               onClick={() => autofill("command")}
               className={`inline-flex items-center justify-center rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
                 role === "command"
-                  ? "border-sky-600 bg-sky-50 text-sky-700 shadow-sm"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  ? "border-sky-600 bg-sky-50 text-sky-700 shadow-sm dark:border-sky-500 dark:bg-sky-950/50 dark:text-sky-300"
+                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               }`}
             >
               <Shield className="mr-1.5 h-4 w-4" /> Command
@@ -299,8 +405,8 @@ export default function Home() {
               onClick={() => autofill("captain")}
               className={`inline-flex items-center justify-center rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
                 role === "captain"
-                  ? "border-violet-600 bg-violet-50 text-violet-700 shadow-sm"
-                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                  ? "border-violet-600 bg-violet-50 text-violet-700 shadow-sm dark:border-violet-500 dark:bg-violet-950/40 dark:text-violet-300"
+                  : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
               }`}
             >
               <Ship className="mr-1.5 h-4 w-4" /> Captain
@@ -309,28 +415,32 @@ export default function Home() {
 
           <motion.form variants={fadeInUp as any} onSubmit={submitLogin} className="mt-6 space-y-4">
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-600">Username</label>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Username
+              </label>
               <input
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-sky-500 transition focus:border-sky-400 focus:ring-2"
+                className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-sky-500 transition focus:border-sky-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-sky-500"
                 placeholder="command@seung.local"
               />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-semibold text-slate-600">Password</label>
+              <label className="mb-1.5 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Password
+              </label>
               <div className="flex items-center gap-2">
                 <input
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-sky-500 transition focus:border-sky-400 focus:ring-2"
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm outline-none ring-sky-500 transition focus:border-sky-400 focus:ring-2 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-500 dark:focus:border-sky-500"
                   placeholder="Enter your password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((v) => !v)}
-                  className="rounded-xl border border-slate-300 p-2.5 text-slate-600 transition hover:bg-slate-50"
+                  className="rounded-xl border border-slate-300 p-2.5 text-slate-600 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-700"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? (
@@ -341,30 +451,104 @@ export default function Home() {
                 </button>
               </div>
             </div>
-            <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+            <label className="inline-flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
               <input
                 type="checkbox"
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
-                className="h-4 w-4 rounded border-slate-300"
+                className="h-4 w-4 rounded border-slate-300 dark:border-slate-600 dark:bg-slate-800"
               />
               Remember me on this device
             </label>
             {displayError ? (
-              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+              <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-300">
                 {displayError}
               </p>
             ) : null}
             <button
               type="submit"
               disabled={loading}
-              className="inline-flex w-full items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex w-full items-center justify-center rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-sky-600 dark:hover:bg-sky-500"
             >
               {loading ? "Signing in..." : `Login as ${role}`}
             </button>
           </motion.form>
         </motion.section>
       </motion.div>
+
+      <button
+        type="button"
+        onClick={() => setChatOpen(true)}
+        className="fixed bottom-6 right-6 z-50 inline-flex h-12 w-12 items-center justify-center rounded-full border border-slate-800 bg-slate-900 text-white shadow-lg transition hover:bg-slate-800 dark:border-sky-700 dark:bg-sky-700 dark:hover:bg-sky-600"
+        aria-label="Open AI chat"
+      >
+        <Bot className="h-5 w-5" />
+      </button>
+
+      <AnimatePresence>
+        {chatOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.98 }}
+            transition={{ duration: 0.2 }}
+            className="fixed bottom-22 right-6 z-50 flex h-[480px] w-[360px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 bg-slate-900 px-4 py-3 text-white dark:border-slate-700 dark:bg-slate-950">
+              <div className="flex items-center gap-2">
+                <Bot className="h-4 w-4" />
+                <span className="text-sm font-semibold">Seung AI Assistant</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setChatOpen(false)}
+                className="rounded-md p-1 text-slate-200 transition hover:bg-slate-800 hover:text-white"
+                aria-label="Close AI chat"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="hide-scrollbar flex-1 space-y-2 overflow-y-auto bg-slate-50 p-3 dark:bg-slate-950">
+              {chatMessages.map((msg, idx) => (
+                <div
+                  key={`${msg.role}-${idx}`}
+                  className={`max-w-[85%] rounded-xl px-3 py-2 text-sm ${
+                    msg.role === "user"
+                      ? "ml-auto bg-slate-900 text-white dark:bg-sky-700"
+                      : "border border-slate-200 bg-white text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+                  }`}
+                >
+                  {msg.text}
+                </div>
+              ))}
+              {chatLoading && (
+                <div className="max-w-[85%] rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                  Thinking...
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={sendChat} className="border-t border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex items-center gap-2">
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Ask AI..."
+                  className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition focus:border-sky-500 focus:ring-2 focus:ring-sky-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 dark:focus:border-sky-500 dark:focus:ring-sky-900/50"
+                />
+                <button
+                  type="submit"
+                  disabled={chatLoading || !chatInput.trim()}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-sky-600 dark:hover:bg-sky-500"
+                >
+                  <Send className="h-4 w-4" />
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </main>
   );
 }

@@ -87,6 +87,7 @@ export interface AlertRecord {
     | "fuel_exhausted"
     | "weather_danger"
     | "zone_encirclement_entry"
+    | "zone_proximity"
     | "arrived";
   severityScore: number;
   title: string;

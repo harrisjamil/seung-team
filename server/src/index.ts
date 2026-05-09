@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import { WebSocketServer } from "ws";
 import type { RawData, WebSocket } from "ws";
 
-import type { Role } from "./types.js";
+import type { FleetShipConfig, Role } from "./types.js";
 import { SimEngine } from "./sim.js";
 import { hasSupabase, safeDb, supabase } from "./supabase.js";
 
@@ -188,6 +188,69 @@ async function handleMessage(ws: WebSocket, raw: string) {
 
   if (type === "zone.delete" && meta.role === "command") {
     sim.deleteZone(String(msg.id ?? ""));
+    return;
+  }
+
+  if (type === "ship.create" && meta.role === "command") {
+    const s = msg.ship as Partial<FleetShipConfig> | undefined;
+    if (!s?.id?.trim() || !s.name?.trim()) {
+      send(ws, { type: "error", message: "ship.create requires id and name." });
+      return;
+    }
+    const cargo =
+      s.cargo && typeof s.cargo === "object" ? (s.cargo as Record<string, unknown>) : {};
+    const result = sim.createShip({
+      id: String(s.id).trim(),
+      name: String(s.name).trim(),
+      lat: Number(s.lat),
+      lng: Number(s.lng),
+      headingDeg: Number(s.headingDeg ?? 0),
+      speedKnots: Number(s.speedKnots ?? 12),
+      destinationPortId: String(s.destinationPortId ?? ""),
+      fuelTonnes: Number(s.fuelTonnes ?? 400),
+      fuelBurnTonnesPerNm: Number(s.fuelBurnTonnesPerNm ?? 0.045),
+      cargo,
+    });
+    if (!result.ok) send(ws, { type: "error", message: result.error });
+    return;
+  }
+
+  if (type === "ship.update" && meta.role === "command") {
+    const shipId = String(msg.shipId ?? "").trim();
+    if (!shipId) {
+      send(ws, { type: "error", message: "ship.update requires shipId." });
+      return;
+    }
+    const p = msg.patch as Partial<FleetShipConfig>;
+    const patch: Partial<Omit<FleetShipConfig, "id">> = {};
+    if (p.name != null) patch.name = String(p.name);
+    if (p.lat != null && Number.isFinite(Number(p.lat))) patch.lat = Number(p.lat);
+    if (p.lng != null && Number.isFinite(Number(p.lng))) patch.lng = Number(p.lng);
+    if (p.headingDeg != null && Number.isFinite(Number(p.headingDeg)))
+      patch.headingDeg = Number(p.headingDeg);
+    if (p.speedKnots != null && Number.isFinite(Number(p.speedKnots)))
+      patch.speedKnots = Number(p.speedKnots);
+    if (p.destinationPortId != null) patch.destinationPortId = String(p.destinationPortId);
+    if (p.fuelTonnes != null && Number.isFinite(Number(p.fuelTonnes)))
+      patch.fuelTonnes = Number(p.fuelTonnes);
+    if (p.fuelBurnTonnesPerNm != null && Number.isFinite(Number(p.fuelBurnTonnesPerNm)))
+      patch.fuelBurnTonnesPerNm = Number(p.fuelBurnTonnesPerNm);
+    if (p.cargo != null && typeof p.cargo === "object") {
+      patch.cargo = p.cargo as Record<string, unknown>;
+    }
+    const result = sim.updateShip(shipId, patch);
+    if (!result.ok) send(ws, { type: "error", message: result.error });
+    return;
+  }
+
+  if (type === "ship.delete" && meta.role === "command") {
+    const shipId = String(msg.shipId ?? "").trim();
+    if (!shipId) {
+      send(ws, { type: "error", message: "ship.delete requires shipId." });
+      return;
+    }
+    const result = sim.deleteShip(shipId);
+    if (!result.ok) send(ws, { type: "error", message: result.error });
     return;
   }
 

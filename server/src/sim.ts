@@ -1,9 +1,10 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   bearingDegrees,
+  distanceKmPointToRing,
   haversineKm,
   nmFromKm,
   pointInPolygon,
@@ -15,6 +16,7 @@ import type {
   AlertRecord,
   Directive,
   FleetJson,
+  FleetShipConfig,
   FleetShipRuntime,
   PlaybackBuffer,
   RestrictedZone,
@@ -23,7 +25,13 @@ import type {
 } from "./types.js";
 import { parseDistressMessage, distressSeverityScore } from "./nlp.js";
 import { computeRoute } from "./routing.js";
-import { fetchWeatherAt } from "./weather.js";
+import {
+  ADVERSE_FUEL_MULTIPLIER,
+  fetchWeatherAt,
+  isAdverseWeatherAt,
+  measureAdverseAlongWaypoints,
+  prefetchWeatherForRouting,
+} from "./weather.js";
 import { hasSupabase, safeDb, supabase } from "./supabase.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -69,8 +77,12 @@ export class SimEngine {
   playback: PlaybackBuffer = { snapshots: [], maxSnapshots: 121 };
   proximityActive = new Set<string>();
   geofenceActive = new Set<string>();
+  zoneNearActive = new Set<string>();
   weatherDangerActive = new Set<string>();
   t0 = Date.now();
+
+  /** Invalidate stale async reroute when a newer one is requested for the same ship. */
+  private routePlanGen = new Map<string, number>();
 
   readonly tickSeconds: number;
 
@@ -195,6 +207,25 @@ export class SimEngine {
         routeMeta: null,
       };
 
+      if (!this.fleet.ships.some((x) => x.id === id)) {
+        const portKey =
+          destinationPortId && this.fleet.ports[destinationPortId]
+            ? destinationPortId
+            : Object.keys(this.fleet.ports)[0] ?? "jebel_ali";
+        this.fleet.ships.push({
+          id,
+          name: ship.name,
+          lat,
+          lng,
+          headingDeg,
+          speedKnots,
+          destinationPortId: portKey,
+          fuelTonnes,
+          fuelBurnTonnesPerNm: ship.fuelBurnTonnesPerNm,
+          cargo: ship.cargo,
+        });
+      }
+
       this.ships.push(ship);
       this.assignRouteFromPosition(ship.id);
     }
@@ -208,6 +239,171 @@ export class SimEngine {
     for (const s of this.ships) {
       this.assignRouteFromPosition(s.id);
     }
+  }
+
+  private persistFleetJson(): void {
+    try {
+      writeFileSync(loadFleetPath(), JSON.stringify(this.fleet, null, 2), "utf-8");
+    } catch (e) {
+      console.error("[sim] persistFleetJson failed", e);
+    }
+  }
+
+  private async upsertShipToDb(s: FleetShipRuntime): Promise<void> {
+    const db = supabase;
+    if (!hasSupabase || !db) return;
+    const now = Date.now();
+    await safeDb(async () => {
+      await db.from("ships").upsert(
+        {
+          ship_id: s.id,
+          name: s.name,
+          lat: s.position.lat,
+          lng: s.position.lng,
+          speed_knots: s.speedKnots,
+          heading_deg: s.headingDeg,
+          destination_port_id: s.destinationPortId,
+          destination_port_name: s.destinationPortName,
+          fuel_tonnes: s.fuelTonnes,
+          cargo: s.cargo,
+          status: s.status,
+          weather_adverse: s.weatherAdverse,
+          fuel_required_remaining_tonnes: s.fuelRequiredRemainingTonnes,
+          route: s.route,
+          route_meta: s.routeMeta,
+          updated_at: now,
+        },
+        { onConflict: "ship_id" },
+      );
+    });
+  }
+
+  private async deleteShipFromDb(shipId: string): Promise<void> {
+    const db = supabase;
+    if (!hasSupabase || !db) return;
+    await safeDb(async () => {
+      await db.from("ships").delete().eq("ship_id", shipId);
+    });
+  }
+
+  /** Command: add a vessel from config (updates {@link fleet.json} when possible). */
+  createShip(cfg: FleetShipConfig): { ok: true } | { ok: false; error: string } {
+    if (this.ships.some((s) => s.id === cfg.id)) {
+      return { ok: false, error: "A ship with this id already exists." };
+    }
+    if (!this.fleet.ports[cfg.destinationPortId]) {
+      return { ok: false, error: "Unknown destination port." };
+    }
+    if (!pointInPolygon(this.fleet.navigableWater, cfg.lng, cfg.lat)) {
+      return { ok: false, error: "Start position is outside navigable water." };
+    }
+    const full: FleetShipConfig = {
+      ...cfg,
+      cargo: (cfg.cargo && typeof cfg.cargo === "object" ? cfg.cargo : {}) as Record<string, unknown>,
+    };
+    this.fleet.ships.push(full);
+    const runtime = this.configToRuntime(full);
+    this.ships.push(runtime);
+    this.assignRouteFromPosition(cfg.id);
+    this.persistFleetJson();
+    void this.upsertShipToDb(runtime);
+    return { ok: true };
+  }
+
+  /** Command: edit static config fields and sync runtime + DB. */
+  updateShip(
+    shipId: string,
+    patch: Partial<Omit<FleetShipConfig, "id">>,
+  ): { ok: true } | { ok: false; error: string } {
+    const fi = this.fleet.ships.findIndex((s) => s.id === shipId);
+    const runtime = this.ships.find((s) => s.id === shipId);
+    if (fi < 0 || !runtime) {
+      return { ok: false, error: "Ship not found." };
+    }
+    const cur = this.fleet.ships[fi];
+    const nextPortId =
+      patch.destinationPortId !== undefined ? patch.destinationPortId : cur.destinationPortId;
+    if (!this.fleet.ports[nextPortId]) {
+      return { ok: false, error: "Unknown destination port." };
+    }
+    const lat = patch.lat !== undefined ? Number(patch.lat) : cur.lat;
+    const lng = patch.lng !== undefined ? Number(patch.lng) : cur.lng;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return { ok: false, error: "Invalid coordinates." };
+    }
+    if (!pointInPolygon(this.fleet.navigableWater, lng, lat)) {
+      return { ok: false, error: "Position is outside navigable water." };
+    }
+
+    const merged: FleetShipConfig = {
+      ...cur,
+      id: shipId,
+      name: patch.name !== undefined ? String(patch.name) : cur.name,
+      lat,
+      lng,
+      headingDeg:
+        patch.headingDeg !== undefined ? normalizeHeading(Number(patch.headingDeg)) : cur.headingDeg,
+      speedKnots: patch.speedKnots !== undefined ? Number(patch.speedKnots) : cur.speedKnots,
+      destinationPortId: nextPortId,
+      fuelTonnes: patch.fuelTonnes !== undefined ? Number(patch.fuelTonnes) : cur.fuelTonnes,
+      fuelBurnTonnesPerNm:
+        patch.fuelBurnTonnesPerNm !== undefined
+          ? Number(patch.fuelBurnTonnesPerNm)
+          : cur.fuelBurnTonnesPerNm,
+      cargo:
+        patch.cargo !== undefined && typeof patch.cargo === "object"
+          ? (patch.cargo as Record<string, unknown>)
+          : cur.cargo,
+    };
+
+    this.fleet.ships[fi] = merged;
+
+    const dest = this.fleet.ports[merged.destinationPortId];
+    const portName = dest?.name ?? merged.destinationPortId;
+    const destPos =
+      dest != null ? { lat: dest.lat, lng: dest.lng } : { lat: merged.lat, lng: merged.lng };
+
+    runtime.name = merged.name;
+    runtime.position = { lat: merged.lat, lng: merged.lng };
+    runtime.headingDeg = normalizeHeading(merged.headingDeg);
+    runtime.speedKnots = merged.speedKnots;
+    runtime.cruiseSpeedKnots = merged.speedKnots;
+    runtime.destinationPortId = merged.destinationPortId;
+    runtime.destinationPortName = portName;
+    runtime.destinationPortPosition = destPos;
+    runtime.fuelTonnes = merged.fuelTonnes;
+    runtime.fuelBurnTonnesPerNm = merged.fuelBurnTonnesPerNm;
+    runtime.cargo = merged.cargo as Record<string, unknown>;
+    runtime.maxReportedSpeedKnots = Math.max(runtime.maxReportedSpeedKnots, merged.speedKnots);
+
+    this.assignRouteFromPosition(shipId);
+    this.persistFleetJson();
+    void this.upsertShipToDb(runtime);
+    return { ok: true };
+  }
+
+  /** Command: remove from sim, fleet file, and database. */
+  deleteShip(shipId: string): { ok: true } | { ok: false; error: string } {
+    const before = this.ships.length;
+    this.fleet.ships = this.fleet.ships.filter((s) => s.id !== shipId);
+    this.ships = this.ships.filter((s) => s.id !== shipId);
+    if (this.ships.length === before) {
+      return { ok: false, error: "Ship not found." };
+    }
+    this.directives = this.directives.filter((d) => d.shipId !== shipId);
+    for (const k of [...this.proximityActive]) {
+      if (k.includes(shipId)) this.proximityActive.delete(k);
+    }
+    for (const k of [...this.geofenceActive]) {
+      if (k.startsWith(`${shipId}:`)) this.geofenceActive.delete(k);
+    }
+    for (const k of [...this.zoneNearActive]) {
+      if (k.startsWith(`${shipId}:`)) this.zoneNearActive.delete(k);
+    }
+    this.weatherDangerActive.delete(shipId);
+    this.persistFleetJson();
+    void this.deleteShipFromDb(shipId);
+    return { ok: true };
   }
 
   private configToRuntime(cfg: FleetJson["ships"][0]): FleetShipRuntime {
@@ -238,6 +434,12 @@ export class SimEngine {
   }
 
   assignRouteFromPosition(shipId: string): void {
+    const next = (this.routePlanGen.get(shipId) ?? 0) + 1;
+    this.routePlanGen.set(shipId, next);
+    void this.assignRouteFromPositionAsync(shipId, next);
+  }
+
+  private async assignRouteFromPositionAsync(shipId: string, gen: number): Promise<void> {
     const s = this.ships.find((x) => x.id === shipId);
     if (!s) return;
     if (s.status === "stopped") {
@@ -249,14 +451,24 @@ export class SimEngine {
       return;
     }
 
+    try {
+      await prefetchWeatherForRouting(s.position, s.destinationPortPosition);
+    } catch {
+      /* routing still runs with cold cache */
+    }
+    if (this.routePlanGen.get(shipId) !== gen) return;
+
     const prevStatus = s.status;
     if (s.speedKnots <= 0 && s.fuelTonnes > 0) {
       s.speedKnots = Math.max(s.cruiseSpeedKnots, 1);
     }
     const r = computeRoute(this.fleet, this.zones, s.position, s.destinationPortPosition, 0.03);
+    if (this.routePlanGen.get(shipId) !== gen) return;
+
     if (r.unreachable || r.waypoints.length < 2) {
       s.status = "stranded";
       s.route = [];
+      s.routeMeta = null;
       s.strandedReason =
         "No valid path avoids restricted zones and stays in navigable water.";
       if (prevStatus !== "stranded") {
@@ -272,8 +484,12 @@ export class SimEngine {
       return;
     }
 
+    const adverseMetrics = measureAdverseAlongWaypoints(r.waypoints);
     s.route = r.waypoints.length > 1 ? r.waypoints.slice(1) : [];
-    s.routeMeta = { pathNm: r.pathNm, insideAdverseNm: 0 };
+    s.routeMeta = {
+      pathNm: adverseMetrics.pathNm,
+      insideAdverseNm: adverseMetrics.insideAdverseNm,
+    };
     this.updateHeadingTowardWaypoint(s);
 
     const preserve =
@@ -284,7 +500,26 @@ export class SimEngine {
     this.updateFuelProjection(s);
   }
 
+  /** Remaining trip fuel (tonnes) from current position along planned route; per-segment 30% penalty if midpoint is adverse in cache. */
+  private fuelRequiredAlongRemainingPath(s: FleetShipRuntime): number {
+    const chain: LatLng[] = [s.position, ...s.route, s.destinationPortPosition];
+    if (chain.length < 2) return 0;
+    let acc = 0;
+    for (let i = 0; i < chain.length - 1; i++) {
+      const nm = nmFromKm(haversineKm(chain[i], chain[i + 1]));
+      const midLat = (chain[i].lat + chain[i + 1].lat) / 2;
+      const midLng = (chain[i].lng + chain[i + 1].lng) / 2;
+      const mult = isAdverseWeatherAt(midLat, midLng) ? ADVERSE_FUEL_MULTIPLIER : 1;
+      acc += nm * s.fuelBurnTonnesPerNm * mult;
+    }
+    return acc;
+  }
+
   private updateFuelProjection(s: FleetShipRuntime): void {
+    if (s.status === "arrived") {
+      s.fuelRequiredRemainingTonnes = 0;
+      return;
+    }
     if (
       !s.route.length &&
       haversineKm(s.position, s.destinationPortPosition) < 0.85
@@ -292,31 +527,22 @@ export class SimEngine {
       s.fuelRequiredRemainingTonnes =
         nmFromKm(haversineKm(s.position, s.destinationPortPosition)) *
         s.fuelBurnTonnesPerNm *
-        (s.weatherAdverse ? 1.3 : 1);
+        (s.weatherAdverse ? ADVERSE_FUEL_MULTIPLIER : 1);
     } else {
-      let nmRem = nmFromKm(haversineKm(s.position, s.destinationPortPosition));
-      /** crude: approximate along route */
-      nmRem =
-        nmFromKm(haversineKm(s.position, s.route[0] ?? s.destinationPortPosition));
-      let accNm = nmRem;
-      for (let i = 0; i < s.route.length - 1; i++) {
-        accNm += nmFromKm(haversineKm(s.route[i], s.route[i + 1]));
-      }
-      nmRem = accNm;
-      const adverseFactor = s.weatherAdverse ? 1.3 : 1;
-      s.fuelRequiredRemainingTonnes = nmRem * s.fuelBurnTonnesPerNm * adverseFactor;
+      s.fuelRequiredRemainingTonnes = this.fuelRequiredAlongRemainingPath(s);
     }
     if (
       typeof s.fuelRequiredRemainingTonnes === "number" &&
-      s.fuelRequiredRemainingTonnes > s.fuelTonnes * 1.001 &&
-      s.status !== "arrived"
+      s.fuelRequiredRemainingTonnes > s.fuelTonnes * 1.001
     ) {
       if (s.status !== "insufficient_fuel") {
+        const short =
+          s.fuelRequiredRemainingTonnes - s.fuelTonnes;
         this.raiseAlert({
           type: "fuel_low",
           severityScore: 75,
           title: `Insufficient fuel projection: ${s.name}`,
-          detail: `Projected consumption exceeds remaining bunker on current routing snapshot.`,
+          detail: `Need ~${s.fuelRequiredRemainingTonnes.toFixed(1)} t for remaining path (incl. up to ${Math.round((ADVERSE_FUEL_MULTIPLIER - 1) * 100)}% weather penalty on adverse legs); onboard ${s.fuelTonnes.toFixed(1)} t (short ~${short.toFixed(1)} t).`,
           shipIds: [s.id],
         });
       }
@@ -463,7 +689,7 @@ export class SimEngine {
       }
 
       const burnNm = nmFromKm(haversineKm(prevPos, s.position));
-      const factor = s.weatherAdverse ? 1.3 : 1;
+      const factor = s.weatherAdverse ? ADVERSE_FUEL_MULTIPLIER : 1;
       s.fuelTonnes -= burnNm * s.fuelBurnTonnesPerNm * factor;
       if (s.fuelTonnes <= 0) {
         s.fuelTonnes = 0;
@@ -514,6 +740,30 @@ export class SimEngine {
         }
       }
 
+      /** Outside zone but within ~2 km of boundary (warning, with hysteresis) */
+      for (const z of this.zones) {
+        const nearKey = `${s.id}:${z.id}:near`;
+        if (pointInRingLngLat(z.ring, s.position.lng, s.position.lat)) {
+          this.zoneNearActive.delete(nearKey);
+          continue;
+        }
+        const d = distanceKmPointToRing(s.position.lng, s.position.lat, z.ring);
+        if (d <= 2.0 && Number.isFinite(d)) {
+          if (!this.zoneNearActive.has(nearKey)) {
+            this.zoneNearActive.add(nearKey);
+            this.raiseAlert({
+              type: "zone_proximity",
+              severityScore: 70,
+              title: `Near restricted zone: ${s.name}`,
+              detail: `Within 2 km of "${z.name}" (~${d.toFixed(1)} km to boundary) — maintain clearance.`,
+              shipIds: [s.id],
+            });
+          }
+        } else if (d > 2.5) {
+          this.zoneNearActive.delete(nearKey);
+        }
+      }
+
       /** Path intersection with zones */
       for (let i = 0; i < s.route.length - 1; i++) {
         const a = s.route[i];
@@ -543,8 +793,8 @@ export class SimEngine {
             this.raiseAlert({
               type: "proximity",
               severityScore: 72,
-              title: "Proximity warning",
-              detail: `${a.name} and ${b.name} within 2 km.`,
+              title: "Proximity warning (≤2 km)",
+              detail: `${a.name} and ${b.name} are within 2 km — separation recommended.`,
               shipIds: [a.id, b.id],
             });
           }

@@ -6,8 +6,6 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { FleetShipRuntime, RestrictedZone } from "@/lib/sim-types";
 
 const BASE_STYLE = "https://tiles.openfreemap.org/styles/liberty";
-const SHIP_ICON_ID = "flaticon-ship-icon";
-const SHIP_ICON_URL = "/ship-real-icon.png";
 
 type BBox = { south: number; west: number; north: number; east: number };
 
@@ -21,6 +19,8 @@ type Props = {
   draftRing?: [number, number][];
   onMapClick?: (lng: number, lat: number) => void;
   followSelected?: boolean;
+  /** Open-Meteo adverse wind overlay on the map bbox */
+  showWeatherOverlay?: boolean;
 };
 
 function projectBehind(
@@ -35,28 +35,6 @@ function projectBehind(
   return [lng + dLng, lat + dLat];
 }
 
-async function addShipIconImage(
-  map: maplibregl.Map,
-  iconId: string,
-  iconUrl: string,
-): Promise<void> {
-  if (map.hasImage(iconId)) return;
-  const image = await new Promise<ImageBitmap | HTMLImageElement>((resolve, reject) => {
-    map.loadImage(iconUrl, (err, loadedImage) => {
-      if (err || !loadedImage) {
-        reject(err ?? new Error("Failed to load ship icon"));
-        return;
-      }
-      resolve(loadedImage);
-    });
-  });
-  map.addImage(iconId, image, { pixelRatio: 2 });
-}
-
-async function ensureShipMapIcons(map: maplibregl.Map): Promise<void> {
-  await addShipIconImage(map, SHIP_ICON_ID, SHIP_ICON_URL);
-}
-
 export function FleetMap({
   bbox,
   ships,
@@ -67,6 +45,7 @@ export function FleetMap({
   draftRing,
   onMapClick,
   followSelected = false,
+  showWeatherOverlay = true,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -76,6 +55,7 @@ export function FleetMap({
   const onPickShipRef = useRef(onPickShip);
   const pulseFrameRef = useRef<number | null>(null);
   const trackHistoryRef = useRef<Map<string, [number, number][]>>(new Map());
+  const hoverPopupRef = useRef<maplibregl.Popup | null>(null);
 
   useEffect(() => {
     drawModeRef.current = !!drawMode;
@@ -97,6 +77,61 @@ export function FleetMap({
     mapRef.current = map;
 
     map.on("load", () => {
+      map.addSource("weather-adverse", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "weather-elevated-haze",
+        type: "circle",
+        source: "weather-adverse",
+        filter: ["==", ["get", "level"], 1],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 12, 9, 36, 14, 56],
+          "circle-color": "rgba(245, 158, 11, 0.32)",
+          "circle-opacity": 0.65,
+          "circle-blur": 0.88,
+        },
+      });
+      map.addLayer({
+        id: "weather-elevated-core",
+        type: "circle",
+        source: "weather-adverse",
+        filter: ["==", ["get", "level"], 1],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 5, 9, 14, 14, 18],
+          "circle-color": "#d97706",
+          "circle-opacity": 0.45,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "rgba(255,255,255,0.45)",
+        },
+      });
+      map.addLayer({
+        id: "weather-poor-haze",
+        type: "circle",
+        source: "weather-adverse",
+        filter: ["==", ["get", "level"], 2],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 10, 9, 32, 14, 52],
+          "circle-color": "rgba(220, 38, 38, 0.32)",
+          "circle-opacity": 0.72,
+          "circle-blur": 0.85,
+        },
+      });
+      map.addLayer({
+        id: "weather-poor-core",
+        type: "circle",
+        source: "weather-adverse",
+        filter: ["==", ["get", "level"], 2],
+        paint: {
+          "circle-radius": ["interpolate", ["linear"], ["zoom"], 5, 4, 9, 12, 14, 16],
+          "circle-color": "#b91c1c",
+          "circle-opacity": 0.52,
+          "circle-stroke-width": 1,
+          "circle-stroke-color": "rgba(255,255,255,0.5)",
+        },
+      });
+
       map.addSource("ships", {
         type: "geojson",
         data: { type: "FeatureCollection", features: [] },
@@ -159,12 +194,25 @@ export function FleetMap({
         type: "circle",
         source: "ships",
         paint: {
-          /** Tiny neutral fallback marker if icon cannot load */
-          "circle-radius": ["interpolate", ["linear"], ["get", "selected"], 0, 2, 1, 2.8],
-          "circle-color": "#334155",
-          "circle-opacity": 0.25,
+          "circle-radius": ["interpolate", ["linear"], ["get", "selected"], 0, 6.5, 1, 8.5],
+          "circle-color": [
+            "match",
+            ["get", "status"],
+            "distressed",
+            "#ef4444",
+            "rerouting",
+            "#f59e0b",
+            "stranded",
+            "#a855f7",
+            "insufficient_fuel",
+            "#f97316",
+            "stopped",
+            "#64748b",
+            "#0ea5e9",
+          ],
+          "circle-opacity": 0.95,
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 0.8,
+          "circle-stroke-width": ["interpolate", ["linear"], ["get", "selected"], 0, 1.2, 1, 2],
         },
       });
       map.addLayer({
@@ -180,36 +228,6 @@ export function FleetMap({
           "circle-stroke-width": 1.2,
         },
       });
-      void ensureShipMapIcons(map)
-        .then(() => {
-          if (map.getLayer("ships-icon")) return;
-          map.addLayer({
-            id: "ships-icon",
-            type: "symbol",
-            source: "ships",
-            layout: {
-              "icon-image": SHIP_ICON_ID,
-              "icon-size": [
-                "interpolate",
-                ["linear"],
-                ["zoom"],
-                5,
-                ["case", ["==", ["get", "selected"], 1], 0.52, 0.42],
-                7,
-                ["case", ["==", ["get", "selected"], 1], 0.66, 0.56],
-                9,
-                ["case", ["==", ["get", "selected"], 1], 0.84, 0.72],
-              ],
-              "icon-allow-overlap": true,
-              "icon-ignore-placement": true,
-              "icon-rotate": ["get", "headingDeg"],
-              "icon-rotation-alignment": "map",
-              "icon-anchor": "center",
-            },
-            paint: { "icon-opacity": 0.98 },
-          });
-        })
-        .catch(() => undefined);
       map.addLayer({
         id: "ships-labels",
         type: "symbol",
@@ -274,7 +292,7 @@ export function FleetMap({
         onMapClickRef.current(ev.lngLat.lng, ev.lngLat.lat);
         return;
       }
-      const queryLayers = ["ships-icon", "ships-circles"].filter((layerId) =>
+      const queryLayers = ["ships-circles"].filter((layerId) =>
         map.getLayer(layerId),
       );
       if (queryLayers.length === 0) {
@@ -288,10 +306,95 @@ export function FleetMap({
       onPickShipRef.current(typeof id === "string" ? id : null);
     });
 
+    map.on("mousemove", (ev) => {
+      const shipLayers = ["ships-circles"].filter((layerId) =>
+        map.getLayer(layerId),
+      );
+      if (shipLayers.length === 0) return;
+      const feats = map.queryRenderedFeatures(ev.point, { layers: shipLayers });
+      const top = feats[0];
+      const props = top?.properties as
+        | {
+            name?: string;
+            status?: string;
+            fuelTonnes?: number | string;
+            speedKnots?: number | string;
+            headingDeg?: number | string;
+          }
+        | undefined;
+      if (!top || !props) {
+        map.getCanvas().style.cursor = drawModeRef.current ? "crosshair" : "pointer";
+        hoverPopupRef.current?.remove();
+        hoverPopupRef.current = null;
+        return;
+      }
+
+      const coords = (top.geometry as GeoJSON.Point).coordinates as [number, number];
+      const fuel =
+        typeof props.fuelTonnes === "number"
+          ? props.fuelTonnes.toFixed(0)
+          : Number(props.fuelTonnes ?? 0).toFixed(0);
+      const speed =
+        typeof props.speedKnots === "number"
+          ? props.speedKnots.toFixed(1)
+          : Number(props.speedKnots ?? 0).toFixed(1);
+      const heading =
+        typeof props.headingDeg === "number"
+          ? props.headingDeg.toFixed(0)
+          : Number(props.headingDeg ?? 0).toFixed(0);
+      const status = (props.status ?? "normal").toString();
+      const statusTone =
+        status === "distressed"
+          ? { bg: "#fef2f2", color: "#b91c1c", border: "#fecaca" }
+          : status === "underway"
+            ? { bg: "#ecfeff", color: "#0e7490", border: "#a5f3fc" }
+            : { bg: "#f8fafc", color: "#475569", border: "#e2e8f0" };
+
+      map.getCanvas().style.cursor = "pointer";
+      if (!hoverPopupRef.current) {
+        hoverPopupRef.current = new maplibregl.Popup({
+          closeButton: false,
+          closeOnClick: false,
+          className: "ship-hover-popup",
+          offset: 16,
+          maxWidth: "none",
+        });
+      }
+      hoverPopupRef.current
+        .setLngLat(coords)
+        .setHTML(
+          `<div style="min-width:210px;border-radius:14px;border:1px solid #dbe4f0;background:#ffffff;padding:12px;box-shadow:0 14px 30px rgba(15,23,42,0.18);font-family:Arial,sans-serif">
+             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+               <div style="font-size:13px;font-weight:700;color:#0f172a;line-height:1.2">${props.name ?? "Vessel"}</div>
+               <span style="font-size:10px;font-weight:700;text-transform:capitalize;padding:3px 7px;border-radius:999px;background:${statusTone.bg};color:${statusTone.color};border:1px solid ${statusTone.border}">${status}</span>
+             </div>
+             <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:6px">
+               <div style="border:1px solid #e2e8f0;border-radius:8px;padding:6px 7px">
+                 <div style="font-size:10px;color:#64748b">Fuel</div>
+                 <div style="font-size:11px;color:#0f172a;font-weight:700">${fuel}t</div>
+               </div>
+               <div style="border:1px solid #e2e8f0;border-radius:8px;padding:6px 7px">
+                 <div style="font-size:10px;color:#64748b">Speed</div>
+                 <div style="font-size:11px;color:#0f172a;font-weight:700">${speed} kn</div>
+               </div>
+               <div style="grid-column:1 / -1;border:1px solid #e2e8f0;border-radius:8px;padding:6px 7px">
+                 <div style="font-size:10px;color:#64748b">Heading</div>
+                 <div style="font-size:11px;color:#0f172a;font-weight:700">${heading}°</div>
+               </div>
+             </div>
+           </div>`,
+        )
+        .addTo(map);
+    });
+
     return () => {
       if (pulseFrameRef.current != null) {
         cancelAnimationFrame(pulseFrameRef.current);
         pulseFrameRef.current = null;
+      }
+      if (hoverPopupRef.current) {
+        hoverPopupRef.current.remove();
+        hoverPopupRef.current = null;
       }
       map.remove();
       mapRef.current = null;
@@ -336,6 +439,47 @@ export function FleetMap({
   useEffect(() => {
     const m = mapRef.current;
     if (!m?.isStyleLoaded()) return;
+    const wSrc = m.getSource("weather-adverse") as maplibregl.GeoJSONSource | undefined;
+    if (!showWeatherOverlay) {
+      wSrc?.setData({ type: "FeatureCollection", features: [] });
+      return;
+    }
+    if (!bbox || !wSrc) return;
+
+    const ac = new AbortController();
+    const run = async () => {
+      try {
+        const u = new URL("/api/weather/grid", window.location.origin);
+        u.searchParams.set("south", String(bbox.south));
+        u.searchParams.set("west", String(bbox.west));
+        u.searchParams.set("north", String(bbox.north));
+        u.searchParams.set("east", String(bbox.east));
+        u.searchParams.set("cols", "8");
+        u.searchParams.set("rows", "8");
+        const res = await fetch(u.toString(), { signal: ac.signal, cache: "no-store" });
+        const j = (await res.json()) as {
+          ok?: boolean;
+          geojson?: GeoJSON.FeatureCollection;
+        };
+        if (!j.ok || !j.geojson || !mapRef.current?.getSource("weather-adverse")) return;
+        (mapRef.current.getSource("weather-adverse") as maplibregl.GeoJSONSource).setData(
+          j.geojson,
+        );
+      } catch {
+        /* abort or network */
+      }
+    };
+    void run();
+    const iv = window.setInterval(run, 3 * 60 * 1000);
+    return () => {
+      ac.abort();
+      window.clearInterval(iv);
+    };
+  }, [bbox, mapTick, showWeatherOverlay]);
+
+  useEffect(() => {
+    const m = mapRef.current;
+    if (!m?.isStyleLoaded()) return;
     const shipsSrc = m.getSource("ships") as maplibregl.GeoJSONSource | undefined;
     const wakeSrc = m.getSource("ships-wake") as maplibregl.GeoJSONSource | undefined;
     const tracksSrc = m.getSource("ships-tracks") as maplibregl.GeoJSONSource | undefined;
@@ -352,6 +496,8 @@ export function FleetMap({
           id: s.id,
           name: s.name,
           status: s.status,
+          fuelTonnes: s.fuelTonnes,
+          speedKnots: s.speedKnots,
           headingDeg: s.headingDeg,
           selected: s.id === selectedId ? 1 : 0,
         },
@@ -471,10 +617,22 @@ export function FleetMap({
   }, [followSelected, selectedId, ships]);
 
   return (
-    <div
-      ref={containerRef}
-      className="h-full min-h-[420px] w-full rounded-2xl border border-slate-200 bg-white shadow-sm"
-      style={{ cursor: drawMode ? "crosshair" : "pointer" }}
-    />
+    <div className="relative h-full min-h-[420px] w-full">
+      <div
+        ref={containerRef}
+        className="h-full min-h-[420px] w-full rounded-2xl border border-slate-200 bg-white shadow-sm"
+        style={{ cursor: drawMode ? "crosshair" : "pointer" }}
+      />
+      {showWeatherOverlay ? (
+        <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[240px] rounded-lg border border-rose-200 bg-white/95 px-2.5 py-2 text-[10px] leading-snug text-slate-700 shadow-md backdrop-blur-sm">
+          <span className="font-semibold text-rose-800">Weather</span>
+          <span className="text-slate-600">
+            {" "}
+            — Amber: wind ≥8 m/s or gusts ≥12 m/s. Red: wind ≥12 m/s or gusts ≥18 m/s (Open-Meteo,
+            8×8 grid).
+          </span>
+        </div>
+      ) : null}
+    </div>
   );
 }

@@ -110,6 +110,62 @@ export function pointInsideAnyZone(
   return zones.some((z) => pointInRingLngLat(z.ring, lng, lat));
 }
 
+/** Local planar XY in km (longitude scaled by cos reference latitude). */
+function toPlanarKm(lng: number, lat: number, refLatDeg: number): { x: number; y: number } {
+  const cosRef = Math.cos((refLatDeg * Math.PI) / 180);
+  return {
+    x: lng * 111.32 * cosRef,
+    y: lat * 110.574,
+  };
+}
+
+function distanceKmPointToSegment2D(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const apx = px - ax;
+  const apy = py - ay;
+  const denom = abx * abx + aby * aby;
+  const t = denom < 1e-18 ? 0 : Math.max(0, Math.min(1, (apx * abx + apy * aby) / denom));
+  const cx = ax + t * abx;
+  const cy = ay + t * aby;
+  return Math.hypot(px - cx, py - cy);
+}
+
+/**
+ * Minimum approximate distance (km) from a point to a polygon ring boundary.
+ * Uses a local planar projection; adequate for short segments (regional zones).
+ */
+export function distanceKmPointToRing(lng: number, lat: number, ring: [number, number][]): number {
+  let pts = [...ring];
+  if (
+    pts.length > 3 &&
+    pts[0][0] === pts[pts.length - 1][0] &&
+    pts[0][1] === pts[pts.length - 1][1]
+  ) {
+    pts = pts.slice(0, -1);
+  }
+  if (pts.length < 2) return Number.POSITIVE_INFINITY;
+
+  const refLat = lat;
+  const p = toPlanarKm(lng, lat, refLat);
+  let min = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < pts.length; i++) {
+    const [lngA, latA] = pts[i];
+    const [lngB, latB] = pts[(i + 1) % pts.length];
+    const a = toPlanarKm(lngA, latA, refLat);
+    const b = toPlanarKm(lngB, latB, refLat);
+    min = Math.min(min, distanceKmPointToSegment2D(p.x, p.y, a.x, a.y, b.x, b.y));
+  }
+  return min;
+}
+
 export function segmentCrossesRestrictedRing(
   a: LatLng,
   b: LatLng,

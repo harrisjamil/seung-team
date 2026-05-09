@@ -3,6 +3,9 @@ import { config } from "@fortawesome/fontawesome-svg-core";
 import "@fortawesome/fontawesome-svg-core/styles.css";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { AppToaster } from "./components/AppToaster";
+import { FleetThemeScript } from "./components/FleetThemeScript";
+import { FleetThemeProvider } from "./lib/theme";
 
 config.autoAddCss = false;
 
@@ -30,9 +33,14 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <body suppressHydrationWarning className="min-h-full flex flex-col">
-        {children}
+        <FleetThemeScript />
+        <FleetThemeProvider>
+          {children}
+          <AppToaster />
+        </FleetThemeProvider>
       </body>
     </html>
   );

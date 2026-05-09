@@ -2,6 +2,33 @@
 
 End-to-end demo: **15 ships** simulated on the server (**≥4 Hz** ticks by default), synchronized to browsers over **WebSockets** (no polling). Two UIs — **Command** (zones, directives, fleet view) and **Captain** (scoped ship, ACCEPT / ESCALATE_DISTRESS) — plus **playback** of a ring buffer of snapshots (~**30 s** cadence, **~1 hour** window).
 
+## Run the whole system (Docker)
+
+Requirements: **Docker** with Compose v2.
+
+1. Copy environment template and fill in values (see [Environment variables](#environment-variables)):
+
+   ```bash
+   cp .env.example .env
+   # Edit .env — at minimum set Supabase keys if you use auth/persistence
+   ```
+
+2. Apply the database schema (optional but recommended): Supabase SQL Editor → paste `server/supabase-schema.sql` → run.
+
+3. Start **simulator** + **web**:
+
+   ```bash
+   docker compose up --build
+   ```
+
+4. Open **UI**: [http://localhost:3000](http://localhost:3000)  
+   **Simulator health**: [http://localhost:8080/health](http://localhost:8080/health)  
+   The browser connects to the simulator at **`ws://localhost:8080`** (see `NEXT_PUBLIC_WS_URL`). Port **8080** must match your Compose port mapping.
+
+**Assumption (Docker):** You run the stack on one machine; the SPA uses `localhost` for both the Next app (3000) and the WebSocket server (8080). If you deploy behind another hostname, set `NEXT_PUBLIC_WS_URL` (and rebuild the `web` image) to match.
+
+---
+
 ## Requirements coverage (assumptions documented)
 
 | Requirement | How it is met |
@@ -20,7 +47,7 @@ End-to-end demo: **15 ships** simulated on the server (**≥4 Hz** ticks by defa
 | Weather source | **Open-Meteo** (no API key) — see thresholds below |
 | Playback | `playback.request` → last snapshots; UI at `/playback` |
 | Supabase backend | Optional persistence for ships/history/alerts/directives/zones/distress logs |
-| `docker compose up` | Root `docker-compose.yml` |
+| `docker compose up` | Root `docker-compose.yml` + `Dockerfile` + `server/Dockerfile` |
 
 ### Grading proof map (where to demo each metric)
 
@@ -48,7 +75,7 @@ End-to-end demo: **15 ships** simulated on the server (**≥4 Hz** ticks by defa
 - **Captain / Command trust**: no login; `auth` is role selection for the demo.
 - **Arrived**: implicit when within **~0.85 km** of destination port coordinates (config / tuning point).
 
-## Quick start (development)
+## Quick start (development, no Docker)
 
 1. **Simulator** (terminal A), from repo root:
 
@@ -75,71 +102,69 @@ End-to-end demo: **15 ships** simulated on the server (**≥4 Hz** ticks by defa
    set NEXT_PUBLIC_WS_URL=ws://127.0.0.1:8080   # PowerShell/cmd example
    ```
 
-## Docker
-
-From this directory (`seung/` where `docker-compose.yml` lives):
-
-```bash
-docker compose up --build
-```
-
-- UI: [http://localhost:3000](http://localhost:3000)
-- Simulator HTTP health: [http://localhost:8080/health](http://localhost:8080/health)
-
-The Compose file sets **`NEXT_PUBLIC_WS_URL=ws://localhost:8080`** for browsers on the host.
-
-### Supabase setup (recommended for judging / persistence)
-
-1. Open Supabase SQL Editor and run `server/supabase-schema.sql`.
-2. Copy `.env.example` to `.env` and set values:
-
-```bash
-SUPABASE_URL=https://<project-ref>.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
-# Optional fallbacks if service key unavailable:
-SUPABASE_ANON_KEY=<anon-key>
-SUPABASE_PUBLISHABLE_KEY=<publishable-key>
-```
-
-3. Start stack:
-
-```bash
-docker compose up --build
-```
-
-When Supabase env vars are configured, simulator persists:
-- live `ships` state (upsert each tick),
-- `ship_history` snapshots (~30s),
-- `alerts`,
-- `directives`,
-- `zones`,
-- `distress_logs`.
-
-Login seeds (main page autofill buttons):
-- Command: `command@fleet.local` / `command123`
-- Captain: `captain@fleet.local` / `captain123`
+   Or use `npm run dev:all` from the root to run both processes.
 
 ## Environment variables
 
-| Variable | Where | Meaning |
-|---------|-------|---------|
-| `FLEET_CONFIG` | server | Absolute path to `fleet.json` (default: `../fleet.json` relative to compiled `dist`) |
-| `PORT` | server | Listen port (**8080** default) |
-| `TICK_SECONDS` | server | Simulation step length in seconds (**0.25** default ⇒ 4 Hz) |
-| `OPENAI_API_KEY` | server | Optional; enables richer distress parsing |
-| `SUPABASE_URL` | server | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | server | Preferred key for backend writes |
-| `SUPABASE_ANON_KEY` | server | Optional fallback key |
-| `SUPABASE_PUBLISHABLE_KEY` | server | Optional fallback key |
-| `NEXT_PUBLIC_WS_URL` | web build | Full WebSocket URL exposed to the browser |
-| `NEXT_PUBLIC_WS_PORT` | web dev | Fallback port if URL not set (defaults to **8080**) |
+Docker Compose reads a **`.env`** file in the project root for variable substitution (standard Compose behavior). Copy **`.env.example`** → **`.env`** and edit.
 
-Tip for judges: open `http://localhost:8080/health` during the run to show live tick/fan-out metrics and connected client count.
+### Simulator (`server` container)
+
+| Variable | Required | Meaning |
+|----------|----------|---------|
+| `PORT` | No | HTTP + WS listen port; default **8080** (mapped in `docker-compose.yml`) |
+| `FLEET_CONFIG` | No | Path inside the container to `fleet.json`; Compose sets **`/data/fleet.json`** with a volume mount |
+| `TICK_SECONDS` | No | Simulation step in seconds; default **0.25** (4 Hz). Compose passes `${TICK_SECONDS:-0.25}` |
+| `OPENAI_API_KEY` | No | Enables OpenAI-based distress parsing (`server/src/nlp.ts`); heuristic works without it |
+| `SUPABASE_URL` | No* | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | No* | Preferred server key for upserts |
+| `SUPABASE_ANON_KEY` | No* | Fallback if service role not set |
+| `SUPABASE_PUBLISHABLE_KEY` | No* | Another fallback accepted by the server client |
+
+\*Optional for a minimal WS-only demo; **required** for persistence and features that write to Supabase.
+
+### Web / Next.js (`web` container)
+
+| Variable | Required | Where used |
+|----------|----------|------------|
+| `NEXT_PUBLIC_WS_URL` | Recommended | Browser WebSocket URL to the simulator; default **`ws://localhost:8080`** in Compose (baked at **build** time) |
+| `NEXT_PUBLIC_WS_PORT` | No | Fallback port in `lib/useFleetWs.ts` if URL not set (**8080**) |
+| `NEXT_PUBLIC_SUPABASE_URL` | No* | Client-side Supabase (login, REST) — **build** time |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | No* | Publishable/anon key for browser |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | No* | Optional extra fallback in `app/lib/supabaseBrowser.ts` |
+| `SUPABASE_URL` | No* | **Runtime** — API routes / server Supabase client |
+| `SUPABASE_SERVICE_ROLE_KEY` | No* | **Runtime** — API routes (prefer service role for server) |
+| `SUPABASE_ANON_KEY` | No* | **Runtime** fallback |
+| `SUPABASE_PUBLISHABLE_KEY` | No* | **Runtime** fallback |
+
+\*Omit for a read-only map demo; set for auth, chat history API, and server routes that call Supabase.
+
+### API keys not in `.env`
+
+- **Open-Meteo** (weather grid): no key; public API.
+- **Map basemap** (OpenFreeMap / MapLibre): no app key in this baseline.
+- **Hugging Face** (Seung AI chat on the home page): token and model are loaded from Supabase table **`api_integrations`** (`provider = 'huggingface'`) when configured, not from flat env vars.
+
+Tip for judges: open `http://localhost:8080/health` while the stack runs to show live tick rate, fan-out latency, and connected WebSocket clients.
+
+## Supabase setup (recommended for judging / persistence)
+
+1. Create a project and run **`server/supabase-schema.sql`** in the SQL Editor.
+2. Set `.env` as in the table above.
+3. `docker compose up --build` (or local `npm run dev` for each service).
+
+When Supabase is configured, the simulator can persist: live `ships`, `ship_history`, `alerts`, `directives`, `zones`, `distress_logs` (see server code).
+
+Example login seeds (after you load users in Supabase per your schema):
+
+- Command: `command@fleet.local` / `command123`
+- Captain: `captain@fleet.local` / `captain123`
 
 ## Project layout
 
 - `fleet.json` — bbox, navigable polygon, ports, **15** ship seeds.
 - `server/` — Node + **`ws`** tick loop, routing, alerts, NLP, playback buffer.
+- `docker-compose.yml` — simulator + web; `fleet.json` mounted read-only into the simulator.
 - `app/` — Next.js App Router pages: `/command`, `/captain`, `/playback`.
 - `components/FleetMap.tsx` — MapLibre + OpenFreeMap style.
 - `lib/useFleetWs.ts` — WebSocket client + motion smoothing.

@@ -7,16 +7,35 @@ import { useSupabaseShips } from "@/lib/useSupabaseShips";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CommandHeader } from "./components/CommandHeader";
+import { CommandAlertsFeed } from "./components/CommandAlertsFeed";
+import { CommandCards } from "./components/CommandCards";
 import { CommandLeftSidebar } from "./components/CommandLeftSidebar";
 import { CommandMapPanel } from "./components/CommandMapPanel";
 import { CommandRightSidebar } from "./components/CommandRightSidebar";
+import {
+  CommandAlertsFeedSkeleton,
+  CommandCardsSkeleton,
+  CommandHeaderSkeleton,
+  CommandLeftSidebarSkeleton,
+  CommandMapPanelSkeleton,
+  CommandRightSidebarSkeleton,
+} from "./components/CommandSkeletons";
+import { CommandChatFab } from "./components/CommandChatFab";
 import { DeleteZoneModal } from "./components/DeleteZoneModal";
+import { RestrictedZonesPanel } from "./components/RestrictedZonesPanel";
+import { ShipFormModal } from "./components/ShipFormModal";
+import { ShipDeleteModal } from "./components/ShipDeleteModal";
+import { FleetPlaybackBar, usePlaybackOverlay } from "@/app/components/FleetPlaybackBar";
+import { FLEET_CONTENT_PAD, FLEET_PAGE_SHELL } from "@/app/lib/fleet-shell-classes";
+import toast from "react-hot-toast";
 
 export default function CommandPage() {
   const router = useRouter();
-  const { connected, latest, displayShips, bbox, ports, send } = useFleetWs({
-    role: "command",
-  });
+  const { connected, latest, displayShips, bbox, ports, send, playback, requestPlayback } =
+    useFleetWs({
+      role: "command",
+    });
+  const [timelineIdx, setTimelineIdx] = useState<number | null>(null);
   const { ships: supabaseShips } = useSupabaseShips();
   const [selected, setSelected] = useState<string | null>(null);
   const [followSelected, setFollowSelected] = useState(true);
@@ -26,7 +45,12 @@ export default function CommandPage() {
   } | null>(null);
   const [drawMode, setDrawMode] = useState(false);
   const [draftRing, setDraftRing] = useState<[number, number][]>([]);
+  const [shipForm, setShipForm] = useState<
+    null | { mode: "create" | "edit"; ship?: FleetShipRuntime }
+  >(null);
+  const [shipToDelete, setShipToDelete] = useState<FleetShipRuntime | null>(null);
   const seenAlerts = useRef(new Set<string>());
+  const intelligenceSectionRef = useRef<HTMLDivElement | null>(null);
 
   const [directiveKind, setDirectiveKind] = useState<
     "reroute_port" | "divert_waypoint" | "hold_position"
@@ -44,22 +68,33 @@ export default function CommandPage() {
     const alerts = latest?.alerts ?? [];
     for (const al of alerts) {
       if (al.acknowledged || al.resolved) continue;
-      const severe =
+      const shouldNotify =
         al.type === "geofence_breach" ||
+        al.type === "zone_encirclement_entry" ||
+        al.type === "zone_proximity" ||
+        al.type === "weather_danger" ||
         al.type === "proximity" ||
         al.type === "distress" ||
         al.type === "stranded";
-      if (!seenAlerts.current.has(al.id) && severe) {
+      if (!seenAlerts.current.has(al.id) && shouldNotify) {
         seenAlerts.current.add(al.id);
+        toast(`${al.title} — ${al.detail}`, { duration: 6000 });
         try {
           const ctx = new AudioContext();
           const osc = ctx.createOscillator();
           const gain = ctx.createGain();
           osc.connect(gain);
           gain.connect(ctx.destination);
-          gain.gain.value = 0.06;
+          gain.gain.value = 0.055;
           osc.type = "sawtooth";
-          osc.frequency.value = al.type === "distress" ? 880 : 620;
+          osc.frequency.value =
+            al.type === "distress"
+              ? 880
+              : al.type === "weather_danger"
+                ? 540
+                : al.type === "zone_proximity"
+                  ? 480
+                  : 620;
           osc.start();
           setTimeout(() => {
             osc.stop();
@@ -80,19 +115,31 @@ export default function CommandPage() {
     );
   }, [displayShips, latest, selected]);
 
-  const ships: FleetShipRuntime[] = displayShips.length
+  const liveShips: FleetShipRuntime[] = displayShips.length
     ? displayShips
     : latest?.ships?.length
       ? latest.ships
       : supabaseShips;
 
+  const currentZones = latest?.zones ?? [];
+
+  const { ships: mapShips, zones: mapZones, snapshotTime } = usePlaybackOverlay(
+    playback,
+    liveShips,
+    currentZones,
+    timelineIdx,
+  );
+
+  const ships = liveShips;
+
   const openAlerts = useMemo(
     () => (latest?.alerts ?? []).filter((a) => !a.resolved),
     [latest?.alerts],
   );
-  const currentZones = latest?.zones ?? [];
   const distressedCount = ships.filter((s) => s.status === "distressed").length;
   const adverseCount = ships.filter((s) => s.weatherAdverse).length;
+  const isInitialLoading =
+    !latest && displayShips.length === 0 && supabaseShips.length === 0;
 
   useEffect(() => {
     if (!selected && ships.length) setSelected(ships[0].id);
@@ -149,8 +196,52 @@ export default function CommandPage() {
     [send],
   );
 
+  const confirmDeleteShip = useCallback(
+    (shipId: string) => {
+      send({ type: "ship.delete", shipId });
+      setShipToDelete(null);
+      setSelected((cur) => {
+        if (cur !== shipId) return cur;
+        const others = ships.filter((s) => s.id !== shipId);
+        return others[0]?.id ?? null;
+      });
+    },
+    [send, ships],
+  );
+
+  const handleMapPickShip = useCallback((id: string | null) => {
+    setSelected(id);
+    if (!id) return;
+    requestAnimationFrame(() => {
+      intelligenceSectionRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, []);
+
+  if (isInitialLoading) {
+    return (
+      <div className={FLEET_PAGE_SHELL}>
+        <CommandHeaderSkeleton />
+        <div className={FLEET_CONTENT_PAD}>
+          <CommandCardsSkeleton />
+          <CommandAlertsFeedSkeleton />
+          <div className="flex min-w-0 flex-1 flex-col gap-4">
+            <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+              <CommandLeftSidebarSkeleton />
+              <CommandMapPanelSkeleton />
+            </div>
+            <div className="h-32 w-full rounded-2xl border border-slate-200 bg-white/60 animate-pulse" />
+            <CommandRightSidebarSkeleton />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="flex min-h-screen flex-col gap-5 bg-gradient-to-br from-slate-50 via-white to-slate-100 p-5 lg:p-6">
+    <div className={FLEET_PAGE_SHELL}>
       <CommandHeader
         connected={connected}
         openAlertsCount={openAlerts.length}
@@ -159,16 +250,67 @@ export default function CommandPage() {
         router={router}
       />
 
-      <div className="grid flex-1 gap-4 lg:grid-cols-[320px_1fr_340px]">
-        <CommandLeftSidebar
-          ships={ships}
-          selectedId={selected}
+      <div className={FLEET_CONTENT_PAD}>
+      <CommandCards
+        shipCount={ships.length}
+        openAlertsCount={openAlerts.length}
+        distressedCount={distressedCount}
+        adverseCount={adverseCount}
+      />
+
+      <FleetPlaybackBar
+        connected={connected}
+        snapshots={playback}
+        requestPlayback={requestPlayback}
+        liveShipCount={ships.length}
+        scrubIndex={timelineIdx}
+        onScrubIndexChange={setTimelineIdx}
+      />
+
+      <CommandAlertsFeed
+        alerts={latest?.alerts ?? []}
+        openAlertsCount={openAlerts.length}
+        onAcknowledgeAlert={acknowledge}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col gap-4">
+        <div className="grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
+          <div className="order-2 min-w-0 lg:order-1">
+            <CommandLeftSidebar
+              ships={ships}
+              selectedId={selected}
+              onSelectShip={setSelected}
+              shipManagementEnabled
+              onEditShip={(s) => setShipForm({ mode: "edit", ship: s })}
+              onDeleteShip={(s) => setShipToDelete(s)}
+            />
+          </div>
+
+          <div className="order-1 min-w-0 lg:order-2">
+            <CommandMapPanel
+              bbox={bbox}
+              ships={mapShips}
+              zones={mapZones}
+              selectedId={selected}
+              drawMode={drawMode}
+              draftRing={draftRing}
+              followSelected={followSelected}
+              onPickShip={handleMapPickShip}
+              onMapClick={vertexAdd}
+              onToggleFollow={() => setFollowSelected((v) => !v)}
+              replayHint={
+                timelineIdx != null && snapshotTime
+                  ? `History · ${new Date(snapshotTime).toLocaleTimeString()}`
+                  : null
+              }
+            />
+          </div>
+        </div>
+
+        <RestrictedZonesPanel
           drawMode={drawMode}
           draftRing={draftRing}
-          currentZones={currentZones}
-          alerts={latest?.alerts ?? []}
-          openAlertsCount={openAlerts.length}
-          onSelectShip={setSelected}
+          currentZones={mapZones}
           onToggleDrawMode={() => {
             setDrawMode((d) => !d);
             setDraftRing([]);
@@ -176,42 +318,57 @@ export default function CommandPage() {
           onPublishZone={publishZone}
           onClearDraftRing={() => setDraftRing([])}
           onRequestDeleteZone={setZonePendingDelete}
-          onAcknowledgeAlert={acknowledge}
+          zoneManagementEnabled
         />
 
-        <CommandMapPanel
-          bbox={bbox}
-          ships={ships}
-          zones={currentZones}
-          selectedId={selected}
-          drawMode={drawMode}
-          draftRing={draftRing}
-          followSelected={followSelected}
-          onPickShip={setSelected}
-          onMapClick={vertexAdd}
-          onToggleFollow={() => setFollowSelected((v) => !v)}
-        />
-
-        <CommandRightSidebar
-          selShip={selShip}
-          directiveKind={directiveKind}
-          selectedPortId={selectedPortId}
-          wayLat={wayLat}
-          wayLng={wayLng}
-          ports={ports}
-          onDirectiveKindChange={setDirectiveKind}
-          onSelectedPortIdChange={setSelectedPortId}
-          onWayLatChange={setWayLat}
-          onWayLngChange={setWayLng}
-          onIssueDirective={issueDirective}
-        />
+        <div ref={intelligenceSectionRef} className="min-w-0">
+          <CommandRightSidebar
+            selShip={selShip}
+            directiveKind={directiveKind}
+            selectedPortId={selectedPortId}
+            wayLat={wayLat}
+            wayLng={wayLng}
+            ports={ports}
+            onDirectiveKindChange={setDirectiveKind}
+            onSelectedPortIdChange={setSelectedPortId}
+            onWayLatChange={setWayLat}
+            onWayLngChange={setWayLng}
+            onIssueDirective={issueDirective}
+          />
+        </div>
       </div>
+
+      <ShipFormModal
+        open={shipForm != null}
+        mode={shipForm?.mode ?? "create"}
+        ship={shipForm?.mode === "edit" ? (shipForm.ship ?? null) : null}
+        ports={ports}
+        onClose={() => setShipForm(null)}
+        onSubmit={(payload) => {
+          if (payload.mode === "create" && payload.ship) {
+            send({ type: "ship.create", ship: payload.ship });
+          }
+          if (payload.mode === "edit" && payload.shipId && payload.patch) {
+            send({ type: "ship.update", shipId: payload.shipId, patch: payload.patch });
+          }
+          setShipForm(null);
+        }}
+      />
+
+      <ShipDeleteModal
+        ship={shipToDelete}
+        onCancel={() => setShipToDelete(null)}
+        onConfirm={confirmDeleteShip}
+      />
 
       <DeleteZoneModal
         zone={zonePendingDelete}
         onCancel={() => setZonePendingDelete(null)}
         onConfirm={deleteZone}
       />
+
+      <CommandChatFab />
+      </div>
     </div>
   );
 }

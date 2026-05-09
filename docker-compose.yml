@@ -1,3 +1,7 @@
+# Full stack: simulator (WebSocket + sim tick loop) + Next.js UI.
+# 1. Copy .env.example to .env and set keys (see README).
+# 2. docker compose up --build
+
 services:
   simulator:
     build:
@@ -6,8 +10,9 @@ services:
     ports:
       - "8080:8080"
     environment:
+      PORT: "8080"
       FLEET_CONFIG: /data/fleet.json
-      TICK_SECONDS: "0.25"
+      TICK_SECONDS: "${TICK_SECONDS:-0.25}"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       SUPABASE_URL: ${SUPABASE_URL:-}
       SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
@@ -15,14 +20,46 @@ services:
       SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
     volumes:
       - ./fleet.json:/data/fleet.json:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
 
   web:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_WS_URL: ws://localhost:8080
+        # Baked into the client bundle — must match host port mapping for the simulator (8080).
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8080}
+        NEXT_PUBLIC_WS_PORT: ${NEXT_PUBLIC_WS_PORT:-8080}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:-}
     ports:
       - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      # Server-side Next.js routes (API) and optional fallsbacks
+      SUPABASE_URL: ${SUPABASE_URL:-}
+      SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      SUPABASE_PUBLISHABLE_KEY: ${SUPABASE_PUBLISHABLE_KEY:-}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL:-}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:-}
     depends_on:
-      - simulator
+      simulator:
+        condition: service_healthy
+    restart: unless-stopped

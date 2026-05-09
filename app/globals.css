@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
+/** Manual theme toggle: `class="dark"` on &lt;html&gt; (see FleetThemeScript + FleetThemeProvider). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #0f172a;
+}
+
+.dark {
+  --background: #0f172a;
+  --foreground: #e2e8f0;
 }
 
 @theme inline {
@@ -12,17 +20,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+.dark body {
+  color-scheme: dark;
 }
 
 /* Ensure scrollbars stay visible across the app */
@@ -48,4 +53,62 @@ body {
 
 *::-webkit-scrollbar-thumb:hover {
   background: #64748b;
+}
+
+.dark * {
+  scrollbar-color: #475569 #1e293b;
+}
+
+.dark *::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+.dark *::-webkit-scrollbar-thumb {
+  background: #475569;
+  border: 2px solid #1e293b;
+}
+
+.dark *::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Utility to fully hide scrollbars where needed */
+.hide-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  width: 0 !important;
+  height: 0 !important;
+  display: none !important;
+}
+
+.hide-scrollbar::-webkit-scrollbar-track,
+.hide-scrollbar::-webkit-scrollbar-thumb,
+.hide-scrollbar::-webkit-scrollbar-button,
+.hide-scrollbar::-webkit-scrollbar-corner {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+}
+
+/* Fleet map ship hover: remove MapLibre’s default white “second card” behind custom HTML */
+.ship-hover-popup.maplibregl-popup {
+  background: transparent !important;
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+.ship-hover-popup .maplibregl-popup-content {
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  box-shadow: none !important;
+}
+
+.ship-hover-popup .maplibregl-popup-tip {
+  border-top-color: #ffffff;
+  display: block;
 }

@@ -30,6 +30,12 @@ export function setSession(session: AppSession): void {
   window.localStorage.setItem(KEY, JSON.stringify(session));
 }
 
+export function mergeSession(partial: Partial<AppSession>): void {
+  const cur = getSession();
+  if (!cur) return;
+  setSession({ ...cur, ...partial });
+}
+
 export function clearSession(): void {
   if (typeof window === "undefined") return;
   window.localStorage.removeItem(KEY);

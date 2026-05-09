@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import toast from "react-hot-toast";
 import type {
   FleetShipRuntime,
   HistorySnapshot,
@@ -102,6 +103,7 @@ export function useFleetWs(opts: { role: Role; shipId?: string }) {
         try {
           const msg = JSON.parse(String(ev.data)) as {
             type?: string;
+            message?: string;
             data?: SimStatePayload;
             bbox?: {
               south: number;
@@ -111,6 +113,9 @@ export function useFleetWs(opts: { role: Role; shipId?: string }) {
             };
             ports?: Record<string, { name: string; lat: number; lng: number }>;
           };
+          if (msg.type === "error" && msg.message) {
+            toast.error(String(msg.message));
+          }
           if (msg.type === "hello") {
             if (msg.bbox) setBbox(msg.bbox);
             if (msg.ports) setPorts(msg.ports);

@@ -14,10 +14,11 @@ import {
   faShip,
 } from "@fortawesome/free-solid-svg-icons";
 import type { IconDefinition } from "@fortawesome/fontawesome-svg-core";
-import type { FleetShipRuntime } from "@/lib/sim-types";
+import type { Directive, FleetShipRuntime } from "@/lib/sim-types";
 import { shipTypeVisual } from "./shipVisuals";
 
 export function CommandRightSidebar({
+  variant = "command",
   selShip,
   directiveKind,
   selectedPortId,
@@ -29,7 +30,12 @@ export function CommandRightSidebar({
   onWayLatChange,
   onWayLngChange,
   onIssueDirective,
+  pendingDirectives,
+  captainRespondMessage,
+  onCaptainRespondMessageChange,
+  onCaptainRespondDirective,
 }: {
+  variant?: "command" | "captain";
   selShip?: FleetShipRuntime;
   directiveKind: "reroute_port" | "divert_waypoint" | "hold_position";
   selectedPortId: string;
@@ -43,15 +49,32 @@ export function CommandRightSidebar({
   onWayLatChange: (value: string) => void;
   onWayLngChange: (value: string) => void;
   onIssueDirective: () => void;
+  pendingDirectives?: Directive[];
+  captainRespondMessage?: string;
+  onCaptainRespondMessageChange?: (value: string) => void;
+  onCaptainRespondDirective?: (
+    directiveId: string,
+    response: "ACCEPT" | "ESCALATE_DISTRESS",
+    message?: string,
+  ) => void;
 }) {
   return (
     <aside className="flex flex-col gap-4 overflow-hidden rounded-2xl border border-slate-200/60 bg-white/80 shadow-lg shadow-slate-200/20 backdrop-blur-sm">
       <div className="border-b border-slate-200 p-4">
-        <div className="flex items-center gap-2">
-          <FontAwesomeIcon icon={faAnchor} className="text-slate-600" />
-          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-700">
-            Vessel Intelligence
-          </h2>
+        <div className="rounded-2xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-3 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-900 text-white shadow-sm">
+              <FontAwesomeIcon icon={faAnchor} className="text-sm" />
+            </div>
+            <div>
+              <h2 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-700">
+                Vessel Intelligence
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                {variant === "captain" ? "Your ship — telemetry and orders" : "Tactical ship analytics and control"}
+              </p>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -110,7 +133,62 @@ export function CommandRightSidebar({
                     : "—"
                 }
               />
+              {selShip.routeMeta ? (
+                <>
+                  <ProfessionalRow
+                    icon={faSatelliteDish}
+                    label="Planned path"
+                    value={`${selShip.routeMeta.pathNm.toFixed(1)} nm`}
+                  />
+                  <ProfessionalRow
+                    icon={faCloud}
+                    label="Adverse weather track"
+                    value={`${selShip.routeMeta.insideAdverseNm.toFixed(1)} nm (30% extra burn)`}
+                  />
+                </>
+              ) : null}
             </div>
+          </div>
+
+          <div
+            className={`rounded-xl border-2 p-4 ${
+              selShip.status === "insufficient_fuel"
+                ? "border-rose-300 bg-rose-50"
+                : "border-emerald-200 bg-emerald-50/80"
+            }`}
+          >
+            <h4 className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-700">
+              <FontAwesomeIcon
+                icon={faCircleCheck}
+                className={`mr-2 ${selShip.status === "insufficient_fuel" ? "text-rose-600" : "text-emerald-600"}`}
+              />
+              Destination on current fuel
+            </h4>
+            <p className="text-sm leading-relaxed text-slate-800">
+              {selShip.fuelRequiredRemainingTonnes == null ? (
+                "No route projection available."
+              ) : selShip.status === "arrived" ? (
+                "Vessel has arrived."
+              ) : selShip.status === "insufficient_fuel" ||
+                selShip.fuelRequiredRemainingTonnes > selShip.fuelTonnes * 1.001 ? (
+                <>
+                  <strong className="text-rose-800">Likely not reachable</strong> on planned path with
+                  Open-Meteo adverse segments (30% penalty): needs ~{" "}
+                  <strong>{selShip.fuelRequiredRemainingTonnes.toFixed(1)} t</strong> vs{" "}
+                  <strong>{selShip.fuelTonnes.toFixed(1)} t</strong> remaining.
+                </>
+              ) : (
+                <>
+                  <strong className="text-emerald-800">Reachable</strong>: projected need ~{" "}
+                  {selShip.fuelRequiredRemainingTonnes.toFixed(1)} t (incl. weather penalty on adverse
+                  legs) vs {selShip.fuelTonnes.toFixed(1)} t onboard
+                  {selShip.fuelTonnes - selShip.fuelRequiredRemainingTonnes > 0.5
+                    ? ` · margin ~${(selShip.fuelTonnes - selShip.fuelRequiredRemainingTonnes).toFixed(1)} t`
+                    : ""}
+                  .
+                </>
+              )}
+            </p>
           </div>
 
           <div className="rounded-xl border-2 border-slate-200 bg-white p-4">
@@ -123,75 +201,131 @@ export function CommandRightSidebar({
             </pre>
           </div>
 
-          <div className="rounded-xl border-2 border-sky-200 bg-gradient-to-br from-sky-50 to-blue-50 p-4">
-            <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-sky-800">
-              <FontAwesomeIcon icon={faPaperPlane} className="mr-2 text-sky-600" />
-              Issue Directive
-            </h4>
-            <div className="space-y-3">
-              <select
-                className="w-full rounded-lg border-2 border-sky-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 transition-all focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
-                value={directiveKind}
-                onChange={(e) =>
-                  onDirectiveKindChange(
-                    e.target.value as
-                      | "reroute_port"
-                      | "divert_waypoint"
-                      | "hold_position",
-                  )
-                }
-              >
-                <option value="reroute_port">Reroute to Port</option>
-                <option value="divert_waypoint">Divert to Waypoint</option>
-                <option value="hold_position">Hold Position</option>
-              </select>
-
-              {directiveKind === "reroute_port" && (
+          {variant === "command" && (
+            <div className="rounded-xl border-2 border-sky-200 bg-gradient-to-br from-sky-50 to-blue-50 p-4">
+              <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-sky-800">
+                <FontAwesomeIcon icon={faPaperPlane} className="mr-2 text-sky-600" />
+                Issue Directive
+              </h4>
+              <div className="space-y-3">
                 <select
                   className="w-full rounded-lg border-2 border-sky-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 transition-all focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
-                  value={selectedPortId}
-                  onChange={(e) => onSelectedPortIdChange(e.target.value)}
+                  value={directiveKind}
+                  onChange={(e) =>
+                    onDirectiveKindChange(
+                      e.target.value as
+                        | "reroute_port"
+                        | "divert_waypoint"
+                        | "hold_position",
+                    )
+                  }
                 >
-                  <option value="">Select destination port…</option>
-                  {ports &&
-                    Object.entries(ports).map(([pid, p]) => (
-                      <option key={pid} value={pid}>
-                        {p.name}
-                      </option>
-                    ))}
+                  <option value="reroute_port">Reroute to Port</option>
+                  <option value="divert_waypoint">Divert to Waypoint</option>
+                  <option value="hold_position">Hold Position</option>
                 </select>
-              )}
 
-              {directiveKind === "divert_waypoint" && (
-                <div className="grid grid-cols-2 gap-2">
-                  <input
-                    className="rounded-lg border-2 border-sky-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 placeholder-slate-400 transition-all focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
-                    placeholder="Latitude"
-                    value={wayLat}
-                    onChange={(e) => onWayLatChange(e.target.value)}
-                  />
-                  <input
-                    className="rounded-lg border-2 border-sky-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 placeholder-slate-400 transition-all focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
-                    placeholder="Longitude"
-                    value={wayLng}
-                    onChange={(e) => onWayLngChange(e.target.value)}
-                  />
-                </div>
-              )}
+                {directiveKind === "reroute_port" && (
+                  <select
+                    className="w-full rounded-lg border-2 border-sky-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 transition-all focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
+                    value={selectedPortId}
+                    onChange={(e) => onSelectedPortIdChange(e.target.value)}
+                  >
+                    <option value="">Select destination port…</option>
+                    {ports &&
+                      Object.entries(ports).map(([pid, p]) => (
+                        <option key={pid} value={pid}>
+                          {p.name}
+                        </option>
+                      ))}
+                  </select>
+                )}
 
-              <button
-                type="button"
-                className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-sky-600 to-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-sky-200 transition-all hover:from-sky-700 hover:to-blue-700"
-                onClick={onIssueDirective}
-              >
-                <FontAwesomeIcon icon={faPaperPlane} />
-                Transmit Directive
-              </button>
-              <p className="text-center text-xs font-medium text-sky-700">
-                Captain must accept or escalate distress within 30 seconds
-              </p>
+                {directiveKind === "divert_waypoint" && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      className="rounded-lg border-2 border-sky-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 placeholder-slate-400 transition-all focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
+                      placeholder="Latitude"
+                      value={wayLat}
+                      onChange={(e) => onWayLatChange(e.target.value)}
+                    />
+                    <input
+                      className="rounded-lg border-2 border-sky-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 placeholder-slate-400 transition-all focus:border-sky-500 focus:ring-2 focus:ring-sky-200"
+                      placeholder="Longitude"
+                      value={wayLng}
+                      onChange={(e) => onWayLngChange(e.target.value)}
+                    />
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-r from-sky-600 to-blue-600 px-4 py-2.5 text-sm font-bold text-white shadow-lg shadow-sky-200 transition-all hover:from-sky-700 hover:to-blue-700"
+                  onClick={onIssueDirective}
+                >
+                  <FontAwesomeIcon icon={faPaperPlane} />
+                  Transmit Directive
+                </button>
+                <p className="text-center text-xs font-medium text-sky-700">
+                  Captain must accept or escalate distress within 30 seconds
+                </p>
+              </div>
             </div>
-          </div>
+          )}
+
+          {variant === "captain" && (
+            <div className="rounded-xl border-2 border-amber-200 bg-gradient-to-br from-amber-50 to-orange-50 p-4">
+              <h4 className="mb-3 text-xs font-bold uppercase tracking-wider text-amber-900">
+                <FontAwesomeIcon icon={faPaperPlane} className="mr-2 text-amber-600" />
+                Orders from Command
+              </h4>
+              {(pendingDirectives?.length ?? 0) === 0 ? (
+                <p className="text-sm text-amber-900/70">No pending orders.</p>
+              ) : (
+                <ul className="space-y-3">
+                  {pendingDirectives!.map((d) => (
+                    <li
+                      key={d.id}
+                      className="rounded-lg border border-amber-200 bg-white/80 p-3 shadow-sm"
+                    >
+                      <div className="text-xs font-semibold uppercase text-amber-800">{d.kind}</div>
+                      <pre className="mt-1 max-h-24 overflow-auto rounded border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
+                        {JSON.stringify(d.payload, null, 2)}
+                      </pre>
+                      <div className="mt-2 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-500"
+                          onClick={() => onCaptainRespondDirective?.(d.id, "ACCEPT")}
+                        >
+                          ACCEPT
+                        </button>
+                        <textarea
+                          className="min-h-[64px] w-full rounded-lg border border-rose-200 bg-rose-50/50 p-2 text-xs text-slate-800"
+                          placeholder="Context for escalation (optional)"
+                          value={captainRespondMessage ?? ""}
+                          onChange={(e) => onCaptainRespondMessageChange?.(e.target.value)}
+                        />
+                        <button
+                          type="button"
+                          className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-500"
+                          onClick={() =>
+                            onCaptainRespondDirective?.(
+                              d.id,
+                              "ESCALATE_DISTRESS",
+                              captainRespondMessage || "Captain escalating situation.",
+                            )
+                          }
+                        >
+                          ESCALATE_DISTRESS
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex flex-1 items-center justify-center p-8">
