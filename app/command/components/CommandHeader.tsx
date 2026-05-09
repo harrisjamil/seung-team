@@ -12,9 +12,13 @@ import {
   faRightFromBracket,
 } from "@fortawesome/free-solid-svg-icons";
 import Link from "next/link";
-import type { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+
+/** Same as `useRouter()` from App Router — avoid deep `next/dist` imports for types. */
+type AppRouterInstance = ReturnType<
+  typeof import("next/navigation").useRouter
+>;
 
 export function CommandHeader({
   connected: _connected,
