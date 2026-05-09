@@ -1,14 +1,17 @@
 "use client";
 
 import useSWR from "swr";
+import {
+  PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  PUBLIC_SUPABASE_URL,
+} from "@/lib/supabasePublicDefaults";
 import type { FleetShipRuntime } from "./sim-types";
 
 const SUPABASE_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL ??
-  "https://cgercjszxdewcxkwtded.supabase.co";
+  process.env.NEXT_PUBLIC_SUPABASE_URL ?? PUBLIC_SUPABASE_URL;
 const SUPABASE_KEY =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
-  "sb_publishable_s13hH-GbWW95GxfTMXEwgg_XNwcZ8iB";
+  PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
 type SupabaseShipRow = {
   ship_id: string;

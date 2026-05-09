@@ -1,3 +1,7 @@
+import {
+  PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  PUBLIC_SUPABASE_URL,
+} from "@/lib/supabasePublicDefaults";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -53,8 +57,11 @@ export async function resolveSupabaseConfig() {
 
   const uniqueKeys = Array.from(new Set(keys));
 
-  const sanitizedUrl = (url ?? "").trim();
-  if (!sanitizedUrl || uniqueKeys.length === 0) return null;
+  const sanitizedUrl = ((url ?? "").trim() || PUBLIC_SUPABASE_URL).trim();
+  const finalKeys =
+    uniqueKeys.length > 0 ? uniqueKeys : [PUBLIC_SUPABASE_PUBLISHABLE_KEY];
 
-  return { url: sanitizedUrl, keys: uniqueKeys };
+  if (!sanitizedUrl || finalKeys.length === 0) return null;
+
+  return { url: sanitizedUrl, keys: finalKeys };
 }

@@ -1,6 +1,10 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  PUBLIC_SUPABASE_URL,
+} from "@/lib/supabasePublicDefaults";
 
 function readEnvFromFiles(): Record<string, string> {
   const candidates = [
@@ -41,7 +45,7 @@ const SUPABASE_URL = (
   process.env.SUPABASE_URL ??
   process.env.NEXT_PUBLIC_SUPABASE_URL ??
   ""
-).trim();
+).trim() || PUBLIC_SUPABASE_URL;
 /** Prefer service role on the server; fall back to keys often set as NEXT_PUBLIC_* on Vercel. */
 const SUPABASE_KEY = (
   FILE_ENV.SUPABASE_SERVICE_ROLE_KEY ??
@@ -55,7 +59,7 @@ const SUPABASE_KEY = (
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
   ""
-).trim();
+).trim() || PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
 export function getServerSupabase(): SupabaseClient | null {
   if (!SUPABASE_URL || !SUPABASE_KEY) return null;
