@@ -12,12 +12,20 @@ import { haversineKm, moveToward, type LatLng } from "./geo-client";
 
 function wsUrl(): string {
   if (typeof window === "undefined") return "";
-  const env = process.env.NEXT_PUBLIC_WS_URL;
+  const env = process.env.NEXT_PUBLIC_WS_URL?.trim();
   if (env) return env;
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   const host = window.location.hostname;
-  const port = process.env.NEXT_PUBLIC_WS_PORT ?? "8080";
-  return `${proto}//${host}:${port}`;
+  const port = process.env.NEXT_PUBLIC_WS_PORT?.trim();
+  /**
+   * http://localhost or LAN → talk to dev simulator on :8080.
+   * https:// (Vercel, Render, …) → cannot guess the fleet sim host; set NEXT_PUBLIC_WS_URL to the
+   * separate wss:// URL where server/ is deployed (same codebase, different service).
+   */
+  if (window.location.protocol === "https:") {
+    if (port) return `wss://${host}:${port}`;
+    return "";
+  }
+  return `ws://${host}:${port ?? "8080"}`;
 }
 
 export function useFleetWs(opts: { role: Role; shipId?: string }) {
