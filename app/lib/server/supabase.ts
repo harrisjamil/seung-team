@@ -42,11 +42,18 @@ const SUPABASE_URL = (
   process.env.NEXT_PUBLIC_SUPABASE_URL ??
   ""
 ).trim();
+/** Prefer service role on the server; fall back to keys often set as NEXT_PUBLIC_* on Vercel. */
 const SUPABASE_KEY = (
   FILE_ENV.SUPABASE_SERVICE_ROLE_KEY ??
   FILE_ENV.SUPABASE_ANON_KEY ??
+  FILE_ENV.SUPABASE_PUBLISHABLE_KEY ??
+  FILE_ENV.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  FILE_ENV.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
   process.env.SUPABASE_SERVICE_ROLE_KEY ??
   process.env.SUPABASE_ANON_KEY ??
+  process.env.SUPABASE_PUBLISHABLE_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
+  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
   ""
 ).trim();
 

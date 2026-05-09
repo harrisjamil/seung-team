@@ -35,12 +35,17 @@ export async function resolveSupabaseConfig() {
     return t.length > 0 ? t : null;
   };
 
-  const url = fromEnv(process.env.SUPABASE_URL) ?? fallback.url;
+  const url =
+    fromEnv(process.env.SUPABASE_URL) ??
+    fromEnv(process.env.NEXT_PUBLIC_SUPABASE_URL) ??
+    fallback.url;
 
   const keys = [
     fromEnv(process.env.SUPABASE_SERVICE_ROLE_KEY),
     fromEnv(process.env.SUPABASE_ANON_KEY),
     fromEnv(process.env.SUPABASE_PUBLISHABLE_KEY),
+    fromEnv(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY),
+    fromEnv(process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY),
     fallback.service,
     fallback.anon,
     fallback.publishable,
