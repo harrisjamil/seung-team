@@ -27,6 +27,7 @@ import { ShipFormModal } from "./components/ShipFormModal";
 import { ShipDeleteModal } from "./components/ShipDeleteModal";
 import { FleetPlaybackBar, usePlaybackOverlay } from "@/app/components/FleetPlaybackBar";
 import { FLEET_CONTENT_PAD, FLEET_PAGE_SHELL } from "@/app/lib/fleet-shell-classes";
+import { FLEET_DEFAULT_PORTS } from "@/lib/fleetDefaultPorts";
 import toast from "react-hot-toast";
 
 export default function CommandPage() {
@@ -35,6 +36,7 @@ export default function CommandPage() {
     useFleetWs({
       role: "command",
     });
+  const effectivePorts = ports ?? FLEET_DEFAULT_PORTS;
   const [timelineIdx, setTimelineIdx] = useState<number | null>(null);
   const { ships: supabaseShips } = useSupabaseShips();
   const [selected, setSelected] = useState<string | null>(null);
@@ -328,7 +330,7 @@ export default function CommandPage() {
             selectedPortId={selectedPortId}
             wayLat={wayLat}
             wayLng={wayLng}
-            ports={ports}
+            ports={effectivePorts}
             onDirectiveKindChange={setDirectiveKind}
             onSelectedPortIdChange={setSelectedPortId}
             onWayLatChange={setWayLat}
@@ -342,7 +344,7 @@ export default function CommandPage() {
         open={shipForm != null}
         mode={shipForm?.mode ?? "create"}
         ship={shipForm?.mode === "edit" ? (shipForm.ship ?? null) : null}
-        ports={ports}
+        ports={effectivePorts}
         onClose={() => setShipForm(null)}
         onSubmit={(payload) => {
           if (payload.mode === "create" && payload.ship) {

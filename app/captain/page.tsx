@@ -20,6 +20,7 @@ import { CommandChatFab } from "@/app/command/components/CommandChatFab";
 import { FleetPlaybackBar, usePlaybackOverlay } from "@/app/components/FleetPlaybackBar";
 import { FLEET_CONTENT_PAD, FLEET_PAGE_SHELL } from "@/app/lib/fleet-shell-classes";
 import type { FleetShipRuntime } from "@/lib/sim-types";
+import { FLEET_DEFAULT_PORTS } from "@/lib/fleetDefaultPorts";
 import { useFleetWs } from "@/lib/useFleetWs";
 import { useSupabaseShips } from "@/lib/useSupabaseShips";
 import { useRouter } from "next/navigation";
@@ -83,6 +84,7 @@ function CaptainBridgeInner() {
       role: "captain",
       shipId: shipId ?? undefined,
     });
+  const effectivePorts = ports ?? FLEET_DEFAULT_PORTS;
   const { ships: supabaseShips } = useSupabaseShips();
   const [timelineIdx, setTimelineIdx] = useState<number | null>(null);
 
@@ -329,7 +331,7 @@ function CaptainBridgeInner() {
             selectedPortId={selectedPortId}
             wayLat={wayLat}
             wayLng={wayLng}
-            ports={ports}
+            ports={effectivePorts}
             onDirectiveKindChange={setDirectiveKind}
             onSelectedPortIdChange={setSelectedPortId}
             onWayLatChange={setWayLat}
