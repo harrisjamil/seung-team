@@ -1,0 +1,49 @@
+{
+  "name": "Strait of Hormuz — demo fleet",
+  "bbox": {
+    "south": 23.85,
+    "west": 52.1,
+    "north": 27.15,
+    "east": 59.95
+  },
+  "navigableWater": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [52.15, 23.9],
+        [59.9, 23.9],
+        [59.9, 27.1],
+        [56.2, 27.1],
+        [54.5, 26.4],
+        [52.15, 25.2],
+        [52.15, 23.9]
+      ]
+    ]
+  },
+  "ports": {
+    "jebel_ali": { "name": "Jebel Ali", "lat": 24.9833, "lng": 55.0833 },
+    "bandar_abbas": { "name": "Bandar Abbas", "lat": 27.1832, "lng": 56.2666 },
+    "muscat": { "name": "Muscat", "lat": 23.6139, "lng": 58.5933 },
+    "sohar": { "name": "Sohar", "lat": 24.3475, "lng": 56.7099 },
+    "fujairah": { "name": "Fujairah Port", "lat": 25.1289, "lng": 56.352 },
+    "khasab": { "name": "Khasab", "lat": 26.1579, "lng": 56.247 },
+    "doha": { "name": "Doha", "lat": 25.2854, "lng": 51.531 }
+  },
+  "ships": [
+    { "id": "BRV-001", "name": "Blue Runner I", "lat": 26.12, "lng": 54.92, "headingDeg": 88, "speedKnots": 14, "destinationPortId": "fujairah", "fuelTonnes": 420, "fuelBurnTonnesPerNm": 0.045, "cargo": { "type": "containers", "teu": 2200 } },
+    { "id": "SV-014", "name": "Scarlet Vector", "lat": 25.55, "lng": 55.82, "headingDeg": 65, "speedKnots": 13, "destinationPortId": "bandar_abbas", "fuelTonnes": 380, "fuelBurnTonnesPerNm": 0.048, "cargo": { "type": "bulk_grain", "tonnes": 58000 } },
+    { "id": "NQ-903", "name": "Nova Quest", "lat": 26.38, "lng": 55.71, "headingDeg": 120, "speedKnots": 15, "destinationPortId": "muscat", "fuelTonnes": 460, "fuelBurnTonnesPerNm": 0.042, "cargo": { "type": "vehicles", "units": 4200 } },
+    { "id": "AL-204", "name": "Atlas Line", "lat": 24.95, "lng": 56.4, "headingDeg": 310, "speedKnots": 12, "destinationPortId": "jebel_ali", "fuelTonnes": 510, "fuelBurnTonnesPerNm": 0.038, "cargo": { "type": "chemical", "tonnes": 12000 } },
+    { "id": "TR-773", "name": "Twin Reach", "lat": 26.03, "lng": 57.92, "headingDeg": 260, "speedKnots": 13.5, "destinationPortId": "sohar", "fuelTonnes": 395, "fuelBurnTonnesPerNm": 0.046, "cargo": { "type": "lng_equipment", "tonnes": 9000 } },
+    { "id": "PL-088", "name": "Pale Light", "lat": 24.71, "lng": 54.53, "headingDeg": 42, "speedKnots": 14, "destinationPortId": "muscat", "fuelTonnes": 430, "fuelBurnTonnesPerNm": 0.044, "cargo": { "type": "containers", "teu": 3400 } },
+    { "id": "CH-661", "name": "Chains Horizon", "lat": 25.22, "lng": 57.15, "headingDeg": 180, "speedKnots": 11, "destinationPortId": "khasab", "fuelTonnes": 350, "fuelBurnTonnesPerNm": 0.051, "cargo": { "type": "steel_coils", "tonnes": 45000 } },
+    { "id": "ZK-442", "name": "Zenith Keen", "lat": 26.55, "lng": 56.91, "headingDeg": 225, "speedKnots": 13, "destinationPortId": "fujairah", "fuelTonnes": 400, "fuelBurnTonnesPerNm": 0.046, "cargo": { "type": "refined_products", "tonnes": 35000 } },
+    { "id": "OR-559", "name": "Outbound Reach", "lat": 24.62, "lng": 55.94, "headingDeg": 95, "speedKnots": 12.5, "destinationPortId": "bandar_abbas", "fuelTonnes": 365, "fuelBurnTonnesPerNm": 0.049, "cargo": { "type": "coal", "tonnes": 82000 } },
+    { "id": "MT-121", "name": "Mare Transit", "lat": 25.88, "lng": 54.25, "headingDeg": 72, "speedKnots": 14.5, "destinationPortId": "sohar", "fuelTonnes": 480, "fuelBurnTonnesPerNm": 0.041, "cargo": { "type": "containers", "teu": 4100 } },
+    { "id": "CF-330", "name": "Coral Freight", "lat": 26.21, "lng": 58.35, "headingDeg": 290, "speedKnots": 11.5, "destinationPortId": "jebel_ali", "fuelTonnes": 340, "fuelBurnTonnesPerNm": 0.052, "cargo": { "type": "refrigerated", "teu": 900 } },
+    { "id": "RS-901", "name": "Red Sprinter", "lat": 24.38, "lng": 56.88, "headingDeg": 330, "speedKnots": 15, "destinationPortId": "jebel_ali", "fuelTonnes": 520, "fuelBurnTonnesPerNm": 0.037, "cargo": { "type": "lng", "m3": 155000 } },
+    { "id": "HP-404", "name": "High Portage", "lat": 25.47, "lng": 54.02, "headingDeg": 105, "speedKnots": 13, "destinationPortId": "fujairah", "fuelTonnes": 410, "fuelBurnTonnesPerNm": 0.044, "cargo": { "type": "vehicles", "units": 3100 } },
+    { "id": "DL-212", "name": "Driftline", "lat": 26.44, "lng": 55.22, "headingDeg": 155, "speedKnots": 12, "destinationPortId": "muscat", "fuelTonnes": 375, "fuelBurnTonnesPerNm": 0.048, "cargo": { "type": "project_cargo", "tonnes": 18000 } },
+    { "id": "GN-665", "name": "Grey North", "lat": 25.05, "lng": 57.82, "headingDeg": 240, "speedKnots": 14, "destinationPortId": "khasab", "fuelTonnes": 390, "fuelBurnTonnesPerNm": 0.045, "cargo": { "type": "containers", "teu": 2700 } }
+  ]
+}

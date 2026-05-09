@@ -1,0 +1,24 @@
+services:
+  simulator:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      FLEET_CONFIG: /data/fleet.json
+      TICK_SECONDS: "0.25"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./fleet.json:/data/fleet.json:ro
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_WS_URL: ws://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - simulator
