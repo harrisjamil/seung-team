@@ -1,7 +1,8 @@
 FROM node:22-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# `npm ci` can fail on Render (npm 10 lock validation vs nested picomatch); `npm install` matches local resolution.
+RUN npm install --no-audit --no-fund
 
 FROM node:22-bookworm-slim AS builder
 WORKDIR /app

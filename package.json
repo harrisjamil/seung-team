@@ -24,6 +24,9 @@
     "react-hot-toast": "^2.6.0",
     "swr": "^2.4.1"
   },
+  "overrides": {
+    "picomatch": "4.0.4"
+  },
   "devDependencies": {
     "@types/ws": "^8.18.1",
     "@tailwindcss/postcss": "^4.3.0",
